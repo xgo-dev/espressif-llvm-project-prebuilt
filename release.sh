@@ -383,9 +383,6 @@ write_payload_manifest() {
     local release_dir="$1"
     local target="$2"
     local llvm_targets="X86;ARM;AArch64;AVR;Mips;RISCV;WebAssembly;Xtensa"
-    if [[ "$target" == *-w64-mingw32 ]]; then
-        llvm_targets="RISCV;Xtensa"
-    fi
     cat > "$release_dir/LLGO-LLVM-MANIFEST.txt" << EOF
 payload_version=$VERSION_STRING
 llvm_source_repository=https://github.com/espressif/llvm-project
@@ -490,9 +487,6 @@ validate_release() {
 
     targets="$("$release_dir/bin/llvm-config$exe_suffix" --targets-built)"
     local required_targets=(X86 ARM AArch64 AVR Mips RISCV WebAssembly Xtensa)
-    if [[ "$target" == *-w64-mingw32 ]]; then
-        required_targets=(RISCV Xtensa)
-    fi
     for target_name in "${required_targets[@]}"; do
         if [[ " $targets " != *" $target_name "* ]]; then
             echo "Error: required LLVM target $target_name is missing: $targets" >&2
@@ -619,6 +613,27 @@ EOF
         echo "Error: ESP32, ESP8266, or ESP32-C3 code generation failed" >&2
         return 1
     fi
+
+    # Exercise every non-Espressif backend required by LLGo's embedded target
+    # profiles. llvm-config proves registration; these compilations also prove
+    # that the packaged Clang driver can reach each backend and emit an object.
+    if ! "$release_dir/bin/clang$exe_suffix" --target=i386-unknown-none \
+        -march=i386 -Werror -ffreestanding -c "$test_dir/codegen.c" -o "$test_dir/x86.o" ||
+       ! "$release_dir/bin/clang$exe_suffix" --target=thumbv6m-none-eabi \
+        -mcpu=cortex-m0 -Werror -ffreestanding -c "$test_dir/codegen.c" -o "$test_dir/arm.o" ||
+       ! "$release_dir/bin/clang$exe_suffix" --target=aarch64-none-elf \
+        -Werror -ffreestanding -c "$test_dir/codegen.c" -o "$test_dir/aarch64.o" ||
+       ! "$release_dir/bin/clang$exe_suffix" --target=avr -mmcu=atmega328p \
+        -Werror -ffreestanding -c "$test_dir/codegen.c" -o "$test_dir/avr.o" ||
+       ! "$release_dir/bin/clang$exe_suffix" --target=mipsel-unknown-elf \
+        -march=mips32r2 -mabi=32 -Werror -ffreestanding -c \
+        "$test_dir/codegen.c" -o "$test_dir/mips.o" ||
+       ! "$release_dir/bin/clang$exe_suffix" --target=wasm32-unknown-unknown \
+        -Werror -ffreestanding -c "$test_dir/codegen.c" -o "$test_dir/wasm.o"; then
+        rm -rf "$test_dir"
+        echo "Error: a non-ESP embedded target failed Clang code generation" >&2
+        return 1
+    fi
     if ! "$release_dir/bin/ld.lld$exe_suffix" -r \
         "$test_dir/esp32.o" -o "$test_dir/esp32-linked.o" ||
        ! "$release_dir/bin/ld.lld$exe_suffix" -r \
@@ -671,6 +686,8 @@ EOF
     fi
     for object in \
         "$test_dir/esp32.o" "$test_dir/esp8266.o" "$test_dir/esp32c3.o" \
+        "$test_dir/x86.o" "$test_dir/arm.o" "$test_dir/aarch64.o" \
+        "$test_dir/avr.o" "$test_dir/mips.o" "$test_dir/wasm.o" \
         "$test_dir/esp32-linked.o" "$test_dir/esp8266-linked.o" \
         "$test_dir/esp32c3-linked.o"; do
         if [[ ! -s "$object" ]]; then
@@ -719,6 +736,9 @@ build_windows_platform() {
     done < <(get_ccache_cmake_args)
 
     mkdir -p "$build_dir" "$install_dir"
+    # LLVM_TOOLCHAIN_ENABLED_TARGETS only selects the Espressif runtime
+    # families recognized by the pinned wrapper. LLVM_TARGETS_TO_BUILD expands
+    # the compiler itself; validate_release enforces that complete contract.
     cmake -S "$scripts_dir" -B "$build_dir" -G Ninja \
         "${ccache_args[@]}" \
         -DFETCHCONTENT_SOURCE_DIR_LLVMPROJECT="$LLVM_PROJECTDIR" \
@@ -731,6 +751,8 @@ build_windows_platform() {
         -DLLVM_TOOLCHAIN_CROSS_BUILD_MINGW=ON \
         -DLLVM_TOOLCHAIN_HOST_TRIPLE="$target" \
         '-DLLVM_TOOLCHAIN_ENABLED_TARGETS=RISCV;Xtensa' \
+        '-DLLVM_TARGETS_TO_BUILD=X86;ARM;AArch64;AVR;Mips;RISCV;WebAssembly' \
+        -DLLVM_EXPERIMENTAL_TARGETS_TO_BUILD=Xtensa \
         -DLLVM_Toolchain_DISTRIBUTION_COMPONENTS="$WINDOWS_DISTRIBUTION_COMPONENTS" \
         -DLLVM_TOOLCHAIN_PACKAGE_NAME=esp-clang \
         -DESP_TOOLCHAIN_VER="esp-$VERSION_STRING" \
