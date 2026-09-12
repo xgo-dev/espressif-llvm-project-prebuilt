@@ -10,6 +10,7 @@ on:
       - 'release.sh'
       - 'toolchain.env'
       - 'patches/**'
+      - 'scripts/**'
       - '.github/workflows/release.yml'
       - '**.md'
   pull_request:
@@ -21,6 +22,7 @@ on:
       - 'release.sh'
       - 'toolchain.env'
       - 'patches/**'
+      - 'scripts/**'
       - '.github/workflows/release.yml'
       - '**.md'
   workflow_dispatch:
@@ -135,6 +137,11 @@ jobs:
             os: ubuntu-22.04
             runner: ubuntu-22.04
 
+          # Native Windows ARM64 executables, cross-built with the same bootstrap.
+          - target: aarch64-w64-mingw32
+            os: ubuntu-22.04
+            runner: ubuntu-22.04
+
     runs-on: ${{ matrix.runner }}
     container: ${{ matrix.container }}
     env:
@@ -213,7 +220,7 @@ jobs:
         brew install cmake ninja ccache
 
     - name: Install pinned LLVM 22 MinGW bootstrap
-      if: matrix.target == 'x86_64-w64-mingw32'
+      if: endsWith(matrix.target, '-w64-mingw32')
       shell: bash
       run: |
         source toolchain.env
@@ -225,6 +232,7 @@ jobs:
         mkdir -p "$root"
         tar -xf "$RUNNER_TEMP/$archive" --strip-components=1 -C "$root"
         echo "$root/bin" >> "$GITHUB_PATH"
+        python3 scripts/test_windows_validation.py "$root"
 
     - name: Build esp-clang package
       id: build
@@ -268,17 +276,29 @@ jobs:
         retention-days: ${{ github.event_name == 'pull_request' && 7 || 30 }}
 
   validate-windows:
-    name: Validate esp-clang for x86_64-w64-mingw32
+    name: Validate esp-clang for ${{ matrix.target }}
     needs: [prepare, build]
-    runs-on: windows-2022
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-w64-mingw32
+            runner: windows-2022
+          - target: aarch64-w64-mingw32
+            runner: windows-11-arm
+    runs-on: ${{ matrix.runner }}
     steps:
     - name: Checkout payload contract
       uses: actions/checkout@v4
 
+    - uses: actions/setup-python@v7
+      with:
+        python-version: '3.13'
+
     - name: Download Windows payload
       uses: actions/download-artifact@v4
       with:
-        name: x86_64-w64-mingw32-esp-clang-packages
+        name: ${{ matrix.target }}-esp-clang-packages
         path: artifacts
 
     - name: Verify, extract, and execute payload
@@ -288,14 +308,14 @@ jobs:
         LLVM_REF: ${{ needs.prepare.outputs.llvm_ref }}
         LLVM_EXPECTED_VERSION: ${{ needs.prepare.outputs.llvm_expected_version }}
       run: |
-        archive="artifacts/clang-esp-${TAG}-x86_64-w64-mingw32.tar.xz"
+        archive="artifacts/clang-esp-${TAG}-${{ matrix.target }}.tar.xz"
         checksum="$archive.sha256"
         expected="$(cut -d' ' -f1 "$checksum")"
         actual="$(sha256sum "$archive" | cut -d' ' -f1)"
         test "$actual" = "$expected"
         mkdir extracted
         tar -xf "$archive" -C extracted
-        ./release.sh --validate "$PWD/extracted/esp-clang" x86_64-w64-mingw32
+        ./release.sh --validate "$PWD/extracted/esp-clang" ${{ matrix.target }}
 
   release:
     name: Create Release
