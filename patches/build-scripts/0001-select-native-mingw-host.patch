@@ -1,0 +1,81 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 791cc9a..f8f33e3 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -181,6 +181,24 @@ set(LLVM_TOOLCHAIN_HOST_TRIPLE
+     "Host triple to build toolchain for."
+ )
+
++# The MinGW host is independent of the embedded targets produced by Clang.
++# Keep the historical x64 default when no explicit host was requested.
++set(MINGW_HOST_TRIPLE "${LLVM_TOOLCHAIN_HOST_TRIPLE}")
++if(NOT MINGW_HOST_TRIPLE)
++    set(MINGW_HOST_TRIPLE x86_64-w64-mingw32)
++endif()
++if(LLVM_TOOLCHAIN_CROSS_BUILD_MINGW)
++    if(NOT MINGW_HOST_TRIPLE MATCHES "^(x86_64|aarch64)-w64-mingw32$")
++        message(FATAL_ERROR "Unsupported MinGW host: ${MINGW_HOST_TRIPLE}")
++    endif()
++    string(REGEX REPLACE "-.*" "" MINGW_SYSTEM_PROCESSOR "${MINGW_HOST_TRIPLE}")
++    set(MINGW_RUNTIME_DLLS libwinpthread-1.dll libomp.dll libunwind.dll libc++.dll)
++    # The pinned bootstrap provides this sanitizer runtime only for x64.
++    if(MINGW_SYSTEM_PROCESSOR STREQUAL "x86_64")
++        list(APPEND MINGW_RUNTIME_DLLS libclang_rt.asan_dynamic-x86_64.dll)
++    endif()
++endif()
++
+ option(
+     LLVM_TOOLCHAIN_INCLUDE_GNU_BINUTILS
+     "Build GNU binutils."
+@@ -2888,13 +2906,7 @@ function(
+     endforeach()
+     if(LLVM_TOOLCHAIN_CROSS_BUILD_MINGW)
+         # Copy MinGW runtime DLLs
+-        foreach(mingw_runtime_dll
+-            libwinpthread-1.dll # POSIX thread API implementation
+-            libomp.dll
+-            libclang_rt.asan_dynamic-x86_64.dll # clang runtime
+-            libunwind.dll     # unwinder lib
+-            libc++.dll     # C++ Standard Library
+-        )
++        foreach(mingw_runtime_dll IN LISTS MINGW_RUNTIME_DLLS)
+             add_custom_command(
+                 OUTPUT ${package_filepath}
+                 COMMAND "${CMAKE_COMMAND}" -E copy ${unpack_directory}/bin/${mingw_runtime_dll} ${pack_top_dir}/bin/
+@@ -3101,6 +3113,8 @@ function(
+         -DCMAKE_FIND_ROOT_PATH_MODE_LIBRARY=ONLY
+         -DCMAKE_INSTALL_PREFIX=<INSTALL_DIR>
+         -DCMAKE_SYSTEM_NAME=Windows
++        -DCMAKE_SYSTEM_PROCESSOR=${MINGW_SYSTEM_PROCESSOR}
++        -DLLVM_HOST_TRIPLE=${MINGW_HOST_TRIPLE}
+         -DLLVM_PARALLEL_COMPILE_JOBS=${LLVM_PARALLEL_COMPILE_JOBS}
+         -DLLVM_PARALLEL_LINK_JOBS=${LLVM_PARALLEL_LINK_JOBS}
+         -DLLVM_APPEND_VC_REV=${LLVM_APPEND_VC_REV}
+@@ -3156,13 +3170,7 @@ function(
+     )
+
+     # Copy MinGW runtime DLLs
+-    foreach(mingw_runtime_dll
+-        libwinpthread-1.dll # POSIX thread API implementation
+-        libomp.dll
+-        libclang_rt.asan_dynamic-x86_64.dll # clang runtime
+-        libunwind.dll     # unwinder lib
+-        libc++.dll     # C++ Standard Library
+-    )
++    foreach(mingw_runtime_dll IN LISTS MINGW_RUNTIME_DLLS)
+         install(
+             FILES ${MINGW_SYSROOT}/bin/${mingw_runtime_dll}
+             TYPE BIN
+@@ -3206,9 +3214,9 @@ function(
+ endfunction()
+
+ if(LLVM_TOOLCHAIN_CROSS_BUILD_MINGW)
+-    find_program(MINGW_C_EXECUTABLE x86_64-w64-mingw32-clang REQUIRED)
+-    find_program(MINGW_CXX_EXECUTABLE x86_64-w64-mingw32-clang++ REQUIRED)
+-    cmake_path(SET MINGW_SYSROOT NORMALIZE "${MINGW_C_EXECUTABLE}/../../x86_64-w64-mingw32")
++    find_program(MINGW_C_EXECUTABLE ${MINGW_HOST_TRIPLE}-clang REQUIRED)
++    find_program(MINGW_CXX_EXECUTABLE ${MINGW_HOST_TRIPLE}-clang++ REQUIRED)
++    cmake_path(SET MINGW_SYSROOT NORMALIZE "${MINGW_C_EXECUTABLE}/../../${MINGW_HOST_TRIPLE}")
+
+     add_llvm_mingw(toolchain "${LLVM_Toolchain_DISTRIBUTION_COMPONENTS}")
+     add_llvm_mingw(standalone-libs "${LLVM_Libraries_DISTRIBUTION_COMPONENTS}")

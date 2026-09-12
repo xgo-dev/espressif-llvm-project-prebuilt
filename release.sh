@@ -51,8 +51,8 @@ if [[ "$HOST_OS" == "Darwin" ]]; then
     fi
 fi
 
-# Supported build targets (native builds only)
-VALID_TARGETS="aarch64-apple-darwin aarch64-linux-gnu x86_64-apple-darwin x86_64-linux-gnu x86_64-w64-mingw32"
+# Supported toolchain hosts (Windows payloads are cross-built on Linux)
+VALID_TARGETS="aarch64-apple-darwin aarch64-linux-gnu x86_64-apple-darwin x86_64-linux-gnu x86_64-w64-mingw32 aarch64-w64-mingw32"
 
 # Function to show usage
 show_usage() {
@@ -398,6 +398,8 @@ EOF
         cat >> "$release_dir/LLGO-LLVM-MANIFEST.txt" << EOF
 windows_build_scripts_repository=$ESP_LLVM_BUILD_SCRIPTS_REPOSITORY
 windows_build_scripts_revision=$ESP_LLVM_BUILD_SCRIPTS_REF
+windows_build_scripts_patches=$ESP_LLVM_BUILD_SCRIPTS_PATCHES
+windows_build_scripts_patch_sha256=$(for patch_path in $ESP_LLVM_BUILD_SCRIPTS_PATCHES; do cat "$SCRIPT_DIR/$patch_path"; done | shasum -a 256 | cut -d' ' -f1)
 windows_bootstrap=llvm-mingw-$LLVM_MINGW_VERSION
 windows_bootstrap_sha256=$LLVM_MINGW_LINUX_X86_64_SHA256
 EOF
@@ -450,6 +452,7 @@ validate_release() {
     exe_suffix=""
     if [[ "$target" == *-w64-mingw32 ]]; then
         exe_suffix=".exe"
+        python3 "$SCRIPT_DIR/scripts/validate_windows.py" "$release_dir" "$target" --native
     fi
 
     # Keep this list aligned with LLGo's actual embedded build, archive,
@@ -714,6 +717,16 @@ download_build_scripts() {
         echo "Error: $scripts_dir is at $actual_revision, expected $ESP_LLVM_BUILD_SCRIPTS_REF" >&2
         return 1
     fi
+    local patch_path
+    for patch_path in $ESP_LLVM_BUILD_SCRIPTS_PATCHES; do
+        local absolute_patch="$SCRIPT_DIR/$patch_path"
+        if git -C "$scripts_dir" apply --check "$absolute_patch" 2>/dev/null; then
+            git -C "$scripts_dir" apply "$absolute_patch"
+        elif ! git -C "$scripts_dir" apply --reverse --check "$absolute_patch" 2>/dev/null; then
+            echo "Error: build scripts patch does not apply cleanly: $patch_path" >&2
+            return 1
+        fi
+    done
     echo "$scripts_dir"
 }
 
@@ -725,8 +738,8 @@ build_windows_platform() {
     local scripts_dir
     local ccache_args=()
 
-    if ! command -v x86_64-w64-mingw32-clang >/dev/null 2>&1 ||
-       ! command -v x86_64-w64-mingw32-clang++ >/dev/null 2>&1; then
+    if ! command -v "$target-clang" >/dev/null 2>&1 ||
+       ! command -v "$target-clang++" >/dev/null 2>&1; then
         echo "Error: the pinned llvm-mingw bootstrap is required for $target" >&2
         return 1
     fi
@@ -808,6 +821,8 @@ build_windows_platform() {
         echo "Error: MinGW runtime license is missing from Windows payload" >&2
         return 1
     }
+
+    python3 "$SCRIPT_DIR/scripts/validate_windows.py" "$release_dir" "$target"
 
     cmake --build "$build_dir" --target repack-llvm-toolchain
     local generated_archive
