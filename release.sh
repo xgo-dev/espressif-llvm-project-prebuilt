@@ -14,6 +14,7 @@ TAG="${TAG:-$ESP_LLVM_PAYLOAD_VERSION}"
 VERSION_STRING="$TAG"
 LLVM_PROJECTDIR="${LLVM_PROJECTDIR:-llvm-project}"
 BUILD_DIR_BASE="${BUILD_DIR_BASE:-build}"
+LLVM_REPOSITORY="${LLVM_REPOSITORY:-$ESP_LLVM_SOURCE_REPOSITORY}"
 LLVM_REF="${LLVM_REF:-$ESP_LLVM_SOURCE_REF}"
 LLVM_EXPECTED_VERSION="${LLVM_EXPECTED_VERSION:-$ESP_LLVM_EXPECTED_VERSION}"
 LLVM_EXPECTED_MAJOR="${LLVM_EXPECTED_VERSION%%.*}"
@@ -67,7 +68,8 @@ show_usage() {
     echo ""
     echo "Environment variables:"
     echo "  TAG              - Payload version (default: $TAG)"
-    echo "  LLVM_REF         - Exact Espressif LLVM tag/ref (default: $LLVM_REF)"
+    echo "  LLVM_REPOSITORY  - LLVM source repository (default: $LLVM_REPOSITORY)"
+    echo "  LLVM_REF         - Exact LLVM commit or tag (default: $LLVM_REF)"
     echo "  LLVM_EXPECTED_VERSION - llvm-config version prefix (default: $LLVM_EXPECTED_VERSION)"
     echo "  LLVM_PROJECTDIR  - LLVM source directory (default: $LLVM_PROJECTDIR)"
     echo "  BUILD_DIR_BASE   - Build directory base (default: $BUILD_DIR_BASE)"
@@ -78,19 +80,24 @@ show_usage() {
 # Function to download LLVM source
 download_llvm_source() {
     if [[ ! -d "$LLVM_PROJECTDIR" ]]; then
-        echo "Cloning LLVM project ref $LLVM_REF..."
-        git clone --branch "$LLVM_REF" --depth=1 https://github.com/espressif/llvm-project "$LLVM_PROJECTDIR"
-    else
-        local current_ref
-        current_ref="$(git -C "$LLVM_PROJECTDIR" describe --tags --exact-match 2>/dev/null || true)"
-        if [[ "$current_ref" != "$LLVM_REF" ]]; then
-            echo "Error: $LLVM_PROJECTDIR is at '${current_ref:-an untagged revision}', expected $LLVM_REF" >&2
-            echo "Use a fresh LLVM_PROJECTDIR instead of silently reusing different LLVM sources." >&2
-            return 1
-        fi
-        echo "LLVM project directory already contains $LLVM_REF."
+        echo "Fetching LLVM project $LLVM_REPOSITORY at $LLVM_REF..."
+        git init "$LLVM_PROJECTDIR"
+        git -C "$LLVM_PROJECTDIR" remote add origin "$LLVM_REPOSITORY"
+        git -C "$LLVM_PROJECTDIR" fetch --depth=1 origin "$LLVM_REF"
+        git -C "$LLVM_PROJECTDIR" checkout --detach FETCH_HEAD
+    fi
+    local expected_revision
+    expected_revision="$(git -C "$LLVM_PROJECTDIR" rev-parse --verify "$LLVM_REF^{commit}" 2>/dev/null || true)"
+    if [[ -z "$expected_revision" ]]; then
+        git -C "$LLVM_PROJECTDIR" fetch --depth=1 "$LLVM_REPOSITORY" "$LLVM_REF"
+        expected_revision="$(git -C "$LLVM_PROJECTDIR" rev-parse "FETCH_HEAD^{commit}")"
     fi
     LLVM_SOURCE_REVISION="$(git -C "$LLVM_PROJECTDIR" rev-parse HEAD)"
+    if [[ "$LLVM_SOURCE_REVISION" != "$expected_revision" ]]; then
+        echo "Error: $LLVM_PROJECTDIR is at $LLVM_SOURCE_REVISION, expected $expected_revision ($LLVM_REF)" >&2
+        echo "Use a fresh LLVM_PROJECTDIR instead of silently reusing different LLVM sources." >&2
+        return 1
+    fi
 
     local patch_path
     local patch_files=()
@@ -112,7 +119,10 @@ download_llvm_source() {
         patch_files+=("$absolute_patch")
     done
 
-    if command -v sha256sum >/dev/null 2>&1; then
+    # An empty patch list is valid when the source repository contains all fixes.
+    if [[ ${#patch_files[@]} -eq 0 ]]; then
+        LLVM_SOURCE_PATCH_SHA256=""
+    elif command -v sha256sum >/dev/null 2>&1; then
         LLVM_SOURCE_PATCH_SHA256="$(cat "${patch_files[@]}" | sha256sum | cut -d' ' -f1)"
     else
         LLVM_SOURCE_PATCH_SHA256="$(cat "${patch_files[@]}" | shasum -a 256 | cut -d' ' -f1)"
@@ -385,7 +395,7 @@ write_payload_manifest() {
     local llvm_targets="X86;ARM;AArch64;AVR;Mips;RISCV;WebAssembly;Xtensa"
     cat > "$release_dir/LLGO-LLVM-MANIFEST.txt" << EOF
 payload_version=$VERSION_STRING
-llvm_source_repository=https://github.com/espressif/llvm-project
+llvm_source_repository=$LLVM_REPOSITORY
 llvm_source_ref=$LLVM_REF
 llvm_source_revision=$LLVM_SOURCE_REVISION
 llvm_source_patches=$ESP_LLVM_PATCHES
