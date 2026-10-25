@@ -12,7 +12,7 @@ SYSTEM_DLLS = {
     "gdi32.dll", "imagehlp.dll", "iphlpapi.dll", "kernel32.dll", "msvcrt.dll",
     "ntdll.dll", "ole32.dll", "oleaut32.dll", "psapi.dll", "rpcrt4.dll",
     "secur32.dll", "shell32.dll", "shlwapi.dll", "ucrtbase.dll", "user32.dll",
-    "userenv.dll", "version.dll", "winmm.dll", "ws2_32.dll",
+    "userenv.dll", "version.dll", "winhttp.dll", "winmm.dll", "ws2_32.dll",
 }
 
 
