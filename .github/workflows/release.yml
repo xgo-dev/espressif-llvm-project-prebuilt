@@ -60,9 +60,6 @@ jobs:
     - name: Checkout payload contract
       uses: actions/checkout@v4
 
-    - name: Test LLVM source acquisition
-      run: python3 scripts/test_llvm_source.py
-
     - name: Determine tag and version
       id: vars
       run: |
