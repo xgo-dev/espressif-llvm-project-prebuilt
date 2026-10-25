@@ -79,17 +79,24 @@ show_usage() {
 
 # Function to download LLVM source
 download_llvm_source() {
+    local source_refspec="$LLVM_REF"
+    if [[ ! "$LLVM_REF" =~ ^[0-9a-fA-F]{40}$ ]]; then
+        # Preserve the actual annotated tag, not just FETCH_HEAD: the Windows
+        # packaging wrapper runs git describe in this source checkout.
+        local source_tag="${LLVM_REF#refs/tags/}"
+        source_refspec="refs/tags/$source_tag:refs/tags/$source_tag"
+    fi
     if [[ ! -d "$LLVM_PROJECTDIR" ]]; then
         echo "Fetching LLVM project $LLVM_REPOSITORY at $LLVM_REF..."
         git init "$LLVM_PROJECTDIR"
         git -C "$LLVM_PROJECTDIR" remote add origin "$LLVM_REPOSITORY"
-        git -C "$LLVM_PROJECTDIR" fetch --depth=1 origin "$LLVM_REF"
+        git -C "$LLVM_PROJECTDIR" fetch --depth=1 origin "$source_refspec"
         git -C "$LLVM_PROJECTDIR" checkout --detach FETCH_HEAD
     fi
     local expected_revision
     expected_revision="$(git -C "$LLVM_PROJECTDIR" rev-parse --verify "$LLVM_REF^{commit}" 2>/dev/null || true)"
     if [[ -z "$expected_revision" ]]; then
-        git -C "$LLVM_PROJECTDIR" fetch --depth=1 "$LLVM_REPOSITORY" "$LLVM_REF"
+        git -C "$LLVM_PROJECTDIR" fetch --depth=1 "$LLVM_REPOSITORY" "$source_refspec"
         expected_revision="$(git -C "$LLVM_PROJECTDIR" rev-parse "FETCH_HEAD^{commit}")"
     fi
     LLVM_SOURCE_REVISION="$(git -C "$LLVM_PROJECTDIR" rev-parse HEAD)"
@@ -779,7 +786,7 @@ build_windows_platform() {
         -DLLVM_Toolchain_DISTRIBUTION_COMPONENTS="$WINDOWS_DISTRIBUTION_COMPONENTS" \
         -DLLVM_TOOLCHAIN_PACKAGE_NAME=esp-clang \
         -DESP_TOOLCHAIN_VER="esp-$VERSION_STRING" \
-        -DCLANG_REPOSITORY_STRING=https://github.com/espressif/llvm-project.git \
+        -DCLANG_REPOSITORY_STRING="$LLVM_REPOSITORY" \
         -DCPACK_ARCHIVE_THREADS=0 \
         -DCMAKE_INSTALL_PREFIX="$install_dir"
     validate_ccache_configuration "$build_dir"

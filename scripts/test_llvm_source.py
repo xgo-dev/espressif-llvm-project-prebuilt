@@ -62,6 +62,17 @@ class LLVMSourceTests(unittest.TestCase):
         result = self.acquire('release-test')
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(self.git('-C', str(self.source), 'rev-parse', 'HEAD').strip(), self.first)
+        self.assertEqual(self.git('-C', str(self.source), 'describe', '--abbrev=7').strip(), 'release-test')
+        self.assertEqual(self.git('-C', str(self.source), 'cat-file', '-t', 'refs/tags/release-test').strip(), 'tag')
+
+    def test_existing_checkout_acquires_tag_metadata(self):
+        self.assertEqual(self.acquire().returncode, 0)
+        self.assertEqual(self.git('-C', str(self.source), 'tag').strip(), '')
+        for _ in range(2):
+            result = self.acquire('release-test')
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(self.git('-C', str(self.source), 'describe', '--abbrev=7').strip(), 'release-test')
+            self.assertEqual(self.git('-C', str(self.source), 'rev-parse', 'HEAD').strip(), self.first)
 
     def test_mismatch_does_not_change_checkout(self):
         self.assertEqual(self.acquire().returncode, 0)
