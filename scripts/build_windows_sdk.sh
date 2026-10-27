@@ -3,6 +3,7 @@
 set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$root/toolchain.env"
+source_repository="$LLVM_WINDOWS_SDK_REPOSITORY"
 target=i686-w64-mingw32
 source_dir="${LLVM_SDK_SOURCE_DIR:-$root/llvm-sdk-source}"
 build_root="${LLVM_SDK_BUILD_DIR:-$root/build-sdk}"
@@ -32,7 +33,7 @@ if [[ ! -e "$source_dir/.git" ]]; then
     git init "$source_dir"
 fi
 if ! git -C "$source_dir" remote get-url origin >/dev/null 2>&1; then
-    git -C "$source_dir" remote add origin https://github.com/llvm/llvm-project.git
+    git -C "$source_dir" remote add origin "$source_repository"
 fi
 # Check before checkout so a retry never discards local edits, including after
 # an interrupted init/fetch. An empty initialized repository is safe to resume.
@@ -51,7 +52,9 @@ check_clean_source
 revision="$(git -C "$source_dir" rev-parse --verify HEAD 2>/dev/null || true)"
 if [[ "$revision" != "$LLVM_WINDOWS_SDK_REF" ]]; then
     echo "Fetching LLVM revision $LLVM_WINDOWS_SDK_REF (current: ${revision:-no checkout})"
-    if ! git -C "$source_dir" fetch --depth=1 origin "$LLVM_WINDOWS_SDK_REF"; then
+    # A reusable checkout may still have the previous source repository as
+    # origin. Fetch the configured repository without rewriting that remote.
+    if ! git -C "$source_dir" fetch --depth=1 "$source_repository" "$LLVM_WINDOWS_SDK_REF"; then
         echo "Error: could not fetch pinned LLVM revision $LLVM_WINDOWS_SDK_REF into $source_dir" >&2
         exit 1
     fi
@@ -114,6 +117,7 @@ cp "${runtime_notices[@]}" "$sdk/third-party-licenses/"
 cat > "$sdk/LLGO-LLVM-MANIFEST.txt" <<MANIFEST
 host_target=$target
 llvm_version=$LLVM_WINDOWS_SDK_VERSION
+source_repository=$source_repository
 source_revision=$LLVM_WINDOWS_SDK_REF
 windows_bootstrap=llvm-mingw-$LLVM_MINGW_VERSION
 link_mode=static

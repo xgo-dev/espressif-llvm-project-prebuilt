@@ -32,6 +32,7 @@ class WindowsSDKBuildTests(unittest.TestCase):
                  "commit", "-qm", "fixture source")
         self.revision = self.git(self.upstream, "rev-parse", "HEAD").strip()
         (self.root / "toolchain.env").write_text(
+            "LLVM_WINDOWS_SDK_REPOSITORY=https://github.com/llvm/llvm-project.git\n"
             f"LLVM_WINDOWS_SDK_REF={self.revision}\nLLVM_WINDOWS_SDK_VERSION=99.4.2\nLLVM_MINGW_VERSION=fixture\n")
         self.source = self.root / "source"
         self.bootstrap = self.root / "bootstrap with spaces"
@@ -143,10 +144,17 @@ for arg in sys.argv[1:]:
         self.run_builder()
 
     def test_fetch_failure_is_diagnostic(self):
+        with (self.root / "toolchain.env").open("a") as config:
+            config.write(f'LLVM_WINDOWS_SDK_REPOSITORY="{self.root / "missing-upstream"}"\n')
+        self.run_builder(f"could not fetch pinned LLVM revision {self.revision}")
+
+    def test_configured_repository_overrides_stale_origin(self):
         self.source.mkdir()
         self.git(self.source, "init", "-q")
-        self.git(self.source, "remote", "add", "origin", str(self.root / "missing-upstream"))
-        self.run_builder(f"could not fetch pinned LLVM revision {self.revision}")
+        old_origin = str(self.root / "previous-upstream")
+        self.git(self.source, "remote", "add", "origin", old_origin)
+        self.run_builder()
+        self.assertEqual(self.git(self.source, "remote", "get-url", "origin").strip(), old_origin)
 
     def test_missing_bootstrap_dlls(self):
         self.dll.unlink()
