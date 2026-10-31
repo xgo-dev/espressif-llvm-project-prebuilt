@@ -60,6 +60,12 @@ jobs:
     - name: Checkout payload contract
       uses: actions/checkout@v4
 
+    - name: Test Windows archive packaging
+      run: python3 scripts/test_windows_packaging.py
+
+    - name: Test Unix runtime packaging
+      run: python3 scripts/test_unix_packaging.py
+
     - name: Determine tag and version
       id: vars
       run: |
@@ -193,7 +199,7 @@ jobs:
         sed -i 's|http://security.ubuntu.com/ubuntu/|http://mirrors.kernel.org/ubuntu/|g' /etc/apt/sources.list
         
         apt-get update --fix-missing
-        apt-get install -y build-essential ninja-build git ca-certificates wget python3 python3-pip ccache
+        apt-get install -y build-essential ninja-build git ca-certificates wget python3 python3-pip ccache xz-utils
         
         # Install newer CMake (LLVM requires 3.20+, Ubuntu 20.04 has 3.16)
         CMAKE_VERSION="3.25.3"
@@ -216,13 +222,13 @@ jobs:
       if: startsWith(matrix.os, 'ubuntu-') && matrix.container != 'ubuntu:20.04'
       run: |
         sudo apt-get update
-        sudo apt-get install -y build-essential cmake ninja-build ccache
+        sudo apt-get install -y build-essential cmake ninja-build ccache xz-utils
 
     - name: Install build dependencies (macOS)
       if: startsWith(matrix.os, 'macos-')
       run: |
         brew uninstall cmake || true
-        brew install cmake ninja ccache
+        brew install cmake ninja ccache xz
 
     - name: Install pinned LLVM 22 MinGW bootstrap
       if: endsWith(matrix.target, '-w64-mingw32')
@@ -277,6 +283,7 @@ jobs:
         path: |
           dist/*.tar.xz
           dist/*.sha256
+          dist/dll-abi-smoke/**
         # Shorter retention for PR builds, longer for releases
         retention-days: ${{ github.event_name == 'pull_request' && 7 || 30 }}
 
@@ -322,11 +329,73 @@ jobs:
         test "$actual" = "$expected"
         mkdir extracted
         tar -xf "$archive" -C extracted
+        python scripts/deduplicate_windows_tools.py "$PWD/extracted/esp-clang" --check
         ./release.sh --validate "$PWD/extracted/esp-clang" ${{ matrix.target }}
+        # Execute the probe against this payload's MinGW runtime DLLs, with
+        # its own DLL next to the executable. The probe is not shipped.
+        PATH="$PWD/extracted/esp-clang/bin:$PATH" ./artifacts/dll-abi-smoke/probe.exe
+
+  validate-unix:
+    name: Validate LLGo firmware for ${{ matrix.target }}
+    needs: [prepare, build]
+    permissions:
+      contents: read
+      actions: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-apple-darwin
+            runner: macos-15-intel
+          - target: aarch64-apple-darwin
+            runner: macos-14
+          - target: x86_64-linux-gnu
+            runner: ubuntu-24.04
+          - target: aarch64-linux-gnu
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 40
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-python@v7
+      with:
+        python-version: '3.13'
+    - uses: actions/setup-go@v6
+      with:
+        go-version: '1.27.0'
+        cache: false
+    - uses: actions/download-artifact@v4
+      with:
+        name: ${{ matrix.target }}-esp-clang-packages
+        path: artifacts
+    - name: Verify and execute extracted Unix payload
+      shell: bash
+      env:
+        TAG: ${{ needs.prepare.outputs.tag }}
+        LLVM_EXPECTED_VERSION: ${{ needs.prepare.outputs.llvm_expected_version }}
+      run: |
+        archive="artifacts/clang-esp-${TAG}-${{ matrix.target }}.tar.xz"
+        expected="$(cut -d' ' -f1 "$archive.sha256")"
+        actual="$(shasum -a 256 "$archive" | cut -d' ' -f1)"
+        test "$actual" = "$expected"
+        mkdir extracted
+        tar -xf "$archive" -C extracted
+        ./release.sh --validate "$PWD/extracted/esp-clang" ${{ matrix.target }}
+        python3 scripts/test_unix_llgo.py "$PWD/extracted/esp-clang" \
+          ${{ matrix.target }} "$RUNNER_TEMP/esp-llgo-consumer"
+    - name: Upload firmware validation evidence
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ matrix.target }}-llgo-validation
+        path: |
+          ${{ runner.temp }}/esp-llgo-consumer/consumer-results.json
+          ${{ runner.temp }}/esp-llgo-consumer/firmware source/*.log
+        retention-days: 7
 
   release:
     name: Create Release
-    needs: [prepare, build, validate-windows]
+    needs: [prepare, build, validate-windows, validate-unix]
     if: needs.prepare.outputs.upload == 'true' && github.event_name != 'pull_request'
     runs-on: ubuntu-latest
 
@@ -348,6 +417,13 @@ jobs:
       with:
         tag_name: ${{ needs.prepare.outputs.tag }}
         name: "Espressif LLVM ${{ needs.prepare.outputs.tag }}"
+        body: |
+          Executable Clang/LLVM/LLD runtime toolchains, with all eight LLGo
+          embedded backends, compiler resources, shared libraries and licenses.
+
+          Unix archives omit LLVM/Clang development SDK headers, static SDK
+          libraries and build-system metadata. Builds of LLVM bindings or
+          LLGo itself should continue to use a separately pinned development SDK.
         draft: false
         prerelease: false
         files: |

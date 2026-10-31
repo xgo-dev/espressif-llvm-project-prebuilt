@@ -1,0 +1,29 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -3088,6 +3088,13 @@
+     else()
+         set(dylib_enab OFF)
+     endif()
++    # Keep distro dependency/symlink handling separate from tool linkage.
++    set(llvm_dylib_enab ${dylib_enab})
++    set(llvm_dylib_vis OFF)
++    if(distro_name STREQUAL "toolchain" AND LLVM_TOOLCHAIN_MINGW_SHARED_LLVM)
++        set(llvm_dylib_enab ON)
++        set(llvm_dylib_vis ON)
++    endif()
+ 
+     string(REPLACE ";" "," LLVM_ENABLE_PROJECTS_comma "${LLVM_ENABLE_PROJECTS}")
+     string(REPLACE ";" "," LLVM_DISTRIBUTION_COMPONENTS_comma "${distro_comps}")
+@@ -3123,8 +3130,9 @@
+         -DLLVM_CMAKE_DIR=${LLVM_BINARY_DIR}/lib/cmake/llvm
+         -DLLVM_DISTRIBUTION_COMPONENTS=${LLVM_DISTRIBUTION_COMPONENTS_comma}
+         -DLLVM_DEFAULT_TARGET_TRIPLE=${LLVM_DEFAULT_TARGET_TRIPLE}
+-        -DLLVM_LINK_LLVM_DYLIB=${dylib_enab}
+-        -DLLVM_BUILD_LLVM_DYLIB=${dylib_enab}
++        -DLLVM_LINK_LLVM_DYLIB=${llvm_dylib_enab}
++        -DLLVM_BUILD_LLVM_DYLIB=${llvm_dylib_enab}
++        -DLLVM_BUILD_LLVM_DYLIB_VIS=${llvm_dylib_vis}
+         -DCLANG_LINK_CLANG_DYLIB=${dylib_enab}
+         -DLLVM_ENABLE_PROJECTS=${LLVM_ENABLE_PROJECTS_comma}
+         -DLLVM_TABLEGEN=${LLVM_BINARY_DIR}/bin/llvm-tblgen${CMAKE_EXECUTABLE_SUFFIX}

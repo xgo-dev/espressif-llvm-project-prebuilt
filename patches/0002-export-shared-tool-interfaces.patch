@@ -1,0 +1,50 @@
+diff --git a/llvm/include/llvm/TargetParser/XtensaTargetParser.h b/llvm/include/llvm/TargetParser/XtensaTargetParser.h
+--- a/llvm/include/llvm/TargetParser/XtensaTargetParser.h
++++ b/llvm/include/llvm/TargetParser/XtensaTargetParser.h
+@@ -14,6 +14,7 @@
+ #ifndef LLVM_TARGETPARSER_XTENSATARGETPARSER_H
+ #define LLVM_TARGETPARSER_XTENSATARGETPARSER_H
+ 
++#include "llvm/Support/Compiler.h"
+ #include "llvm/TargetParser/Triple.h"
+ 
+ namespace llvm {
+@@ -71,10 +72,10 @@
+   XF_HIFI3 = 1ULL << 40
+ };
+ 
+-CPUKind parseCPUKind(StringRef CPU);
+-StringRef getBaseName(StringRef CPU);
+-void getCPUFeatures(StringRef CPU, SmallVectorImpl<StringRef> &Features);
+-void fillValidCPUList(SmallVectorImpl<StringRef> &Values);
++LLVM_ABI CPUKind parseCPUKind(StringRef CPU);
++LLVM_ABI StringRef getBaseName(StringRef CPU);
++LLVM_ABI void getCPUFeatures(StringRef CPU, SmallVectorImpl<StringRef> &Features);
++LLVM_ABI void fillValidCPUList(SmallVectorImpl<StringRef> &Values);
+ 
+ } // namespace Xtensa
+ } // namespace llvm
+diff --git a/llvm/include/llvm/Support/VirtualOutputBackends.h b/llvm/include/llvm/Support/VirtualOutputBackends.h
+--- a/llvm/include/llvm/Support/VirtualOutputBackends.h
++++ b/llvm/include/llvm/Support/VirtualOutputBackends.h
+@@ -76,7 +76,7 @@
+ };
+ 
+ /// An output backend that creates files on disk, wrapping APIs in sys::fs.
+-class OnDiskOutputBackend : public OutputBackend {
++class LLVM_EXTERNAL_VISIBILITY OnDiskOutputBackend : public OutputBackend {
+   LLVM_ABI void anchor() override;
+ 
+ protected:
+diff --git a/llvm/include/llvm/DTLTO/DTLTO.h b/llvm/include/llvm/DTLTO/DTLTO.h
+--- a/llvm/include/llvm/DTLTO/DTLTO.h
++++ b/llvm/include/llvm/DTLTO/DTLTO.h
+@@ -31,7 +31,7 @@
+ // The class ensures that lto::InputFile objects are preserved until enough of
+ // the LTO pipeline has executed to determine the required per-module
+ // information, such as whether a module will participate in ThinLTO.
+-class DTLTO : public LTO {
++class LLVM_EXTERNAL_VISIBILITY DTLTO : public LTO {
+   using Base = LTO;
+ 
+ public:

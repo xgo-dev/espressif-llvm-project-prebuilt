@@ -61,7 +61,7 @@ jobs:
           tar -xf "$RUNNER_TEMP/$archive" --strip-components=1 -C "$RUNNER_TEMP/bootstrap"
           echo "$RUNNER_TEMP/bootstrap/bin" >> "$GITHUB_PATH"
           python3 scripts/test_windows_validation.py "$RUNNER_TEMP/bootstrap"
-      - name: Build LLVM 23 Windows x86 SDK
+      - name: Build LLVM 22 Windows x86 SDK
         id: sdk-build
         run: scripts/build_windows_sdk.sh
       - name: Show SDK compiler cache statistics

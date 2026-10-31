@@ -24,7 +24,7 @@ CCACHE_EXECUTABLE=""
 # The pinned Espressif build scripts omit opt from their default Toolchain
 # distribution. LLGo needs it for IR verification and pass-plugin smoke tests,
 # so keep the upstream component set and add opt to the packaged payload.
-WINDOWS_DISTRIBUTION_COMPONENTS="clang-format;clang-resource-headers;clang-tidy;clang;clangd;dsymutil;llc;lld;llvm-ar;llvm-config;llvm-cov;llvm-cxxfilt;llvm-dwarfdump;llvm-nm;llvm-objcopy;llvm-objdump;llvm-profdata;llvm-ranlib;llvm-readelf;llvm-readobj;llvm-size;llvm-strings;llvm-strip;llvm-symbolizer;LTO;opt"
+WINDOWS_DISTRIBUTION_COMPONENTS="LLVM;clang-format;clang-resource-headers;clang-tidy;clang;clangd;dsymutil;llc;lld;llvm-ar;llvm-config;llvm-cov;llvm-cxxfilt;llvm-dwarfdump;llvm-nm;llvm-objcopy;llvm-objdump;llvm-profdata;llvm-ranlib;llvm-readelf;llvm-readobj;llvm-size;llvm-strings;llvm-strip;llvm-symbolizer;LTO;opt"
 
 # Resolve source and build roots before changing into the per-platform build
 # directory. This keeps local qualification builds isolated from the checkout
@@ -342,6 +342,8 @@ create_release_structure() {
 
     install_payload_licenses "$release_dir"
 
+    python3 "$SCRIPT_DIR/scripts/package_unix.py" "$release_dir" "$target"
+
     validate_release "$release_dir" "$target"
 
     echo "Release directory created: $release_dir"
@@ -351,11 +353,23 @@ create_release_structure() {
     # Create tarball
     echo "Creating tarball package..."
     mkdir -p dist
-    cd "dist/${target}"
-    tar -cJf "../clang-esp-${VERSION_STRING}-${target}.tar.xz" esp-clang/
-    cd - > /dev/null
+    local archive="dist/clang-esp-${VERSION_STRING}-${target}.tar.xz"
+    COPYFILE_DISABLE=1 tar -cf - -C "dist/${target}" esp-clang/ | xz -T0 > "$archive"
 
-    write_archive_checksum "dist/clang-esp-${VERSION_STRING}-${target}.tar.xz"
+    write_archive_checksum "$archive"
+
+    # Validate the actual extracted archive without access to the development
+    # installation. This also detects absolute loader paths masked by a build.
+    (
+        local extracted
+        [[ ! -e "$install_dir.runtime-validation" ]]
+        extracted="$(mktemp -d "${TMPDIR:-/tmp}/esp-runtime-relocated.XXXXXX")"
+        mv "$install_dir" "$install_dir.runtime-validation"
+        trap 'mv "$install_dir.runtime-validation" "$install_dir"; rm -rf "$extracted"' EXIT
+        tar -xf "$archive" -C "$extracted"
+        unset LD_LIBRARY_PATH DYLD_LIBRARY_PATH DYLD_FALLBACK_LIBRARY_PATH
+        validate_release "$extracted/esp-clang" "$target"
+    )
 
     echo "Tarball created: dist/clang-esp-${VERSION_STRING}-${target}.tar.xz"
     echo "Checksum created: dist/clang-esp-${VERSION_STRING}-${target}.tar.xz.sha256"
@@ -387,9 +401,12 @@ install_clang_driver_aliases() {
         xtensa-esp8266-elf-clang-as; do
         rm -f "$release_dir/bin/$alias$exe_suffix"
         if [[ -n "$exe_suffix" ]]; then
-            # CPack drops Windows symlinks. Regular PE aliases survive archive
-            # creation and native Windows extraction reliably.
-            cp "$release_dir/bin/clang.exe" "$release_dir/bin/$alias.exe"
+            # Hard links retain the executable name used for driver selection,
+            # survive tar/NTFS extraction, and need no symlink privileges.
+            ln "$release_dir/bin/clang.exe" "$release_dir/bin/$alias.exe" || {
+                echo "Error: failed to hard-link $alias.exe to clang.exe in $release_dir/bin" >&2
+                return 1
+            }
         else
             ln -s clang "$release_dir/bin/$alias"
         fi
@@ -411,6 +428,9 @@ llvm_expected_version=$LLVM_EXPECTED_VERSION
 llvm_targets=$llvm_targets
 host_target=$target
 EOF
+    if [[ "$target" != *-w64-mingw32 ]]; then
+        echo "payload_profile=runtime" >> "$release_dir/LLGO-LLVM-MANIFEST.txt"
+    fi
     if [[ "$target" == *-w64-mingw32 ]]; then
         cat >> "$release_dir/LLGO-LLVM-MANIFEST.txt" << EOF
 windows_build_scripts_repository=$ESP_LLVM_BUILD_SCRIPTS_REPOSITORY
@@ -419,6 +439,7 @@ windows_build_scripts_patches=$ESP_LLVM_BUILD_SCRIPTS_PATCHES
 windows_build_scripts_patch_sha256=$(for patch_path in $ESP_LLVM_BUILD_SCRIPTS_PATCHES; do cat "$SCRIPT_DIR/$patch_path"; done | shasum -a 256 | cut -d' ' -f1)
 windows_bootstrap=llvm-mingw-$LLVM_MINGW_VERSION
 windows_bootstrap_sha256=$LLVM_MINGW_LINUX_X86_64_SHA256
+windows_llvm_link_mode=shared
 EOF
     fi
 }
@@ -469,7 +490,7 @@ validate_release() {
     exe_suffix=""
     if [[ "$target" == *-w64-mingw32 ]]; then
         exe_suffix=".exe"
-        python3 "$SCRIPT_DIR/scripts/validate_windows.py" "$release_dir" "$target" --native
+        python3 "$SCRIPT_DIR/scripts/validate_windows.py" "$release_dir" "$target" --native --require-shared-llvm
     fi
 
     # Keep this list aligned with LLGo's actual embedded build, archive,
@@ -536,14 +557,7 @@ validate_release() {
             return 1
         }
     else
-        [[ -f "$release_dir/include/llvm-c/Core.h" ]] || {
-            echo "Error: llvm-c/Core.h is missing" >&2
-            return 1
-        }
-        [[ -f "$release_dir/lib/cmake/llvm/LLVMConfig.cmake" ]] || {
-            echo "Error: LLVMConfig.cmake is missing" >&2
-            return 1
-        }
+        python3 "$SCRIPT_DIR/scripts/package_unix.py" "$release_dir" "$target" --check
     fi
     [[ -f "$release_dir/THIRD-PARTY-LICENSES.txt" ]] || {
         echo "Error: third-party license summary is missing" >&2
@@ -576,8 +590,8 @@ EOF
     fi
 
     if [[ "$target" != *-w64-mingw32 ]]; then
-        cat > "$test_dir/llvm-c-sdk.c" << EOF
-#include <llvm-c/Core.h>
+        cat > "$test_dir/llvm-c-runtime.c" << EOF
+extern void LLVMGetVersion(unsigned *, unsigned *, unsigned *);
 int main(void) {
   unsigned major = 0, minor = 0, patch = 0;
   LLVMGetVersion(&major, &minor, &patch);
@@ -585,16 +599,38 @@ int main(void) {
 }
 EOF
         if ! "$release_dir/bin/clang" \
-                -I"$release_dir/include" "$test_dir/llvm-c-sdk.c" \
+                "$test_dir/llvm-c-runtime.c" \
                 -L"$release_dir/lib" "-Wl,-rpath,$release_dir/lib" \
                 "-lLLVM-$LLVM_EXPECTED_MAJOR" \
-                -o "$test_dir/llvm-c-sdk" ||
-           ! env \
-                DYLD_LIBRARY_PATH="$release_dir/lib${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}" \
-                LD_LIBRARY_PATH="$release_dir/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
-                "$test_dir/llvm-c-sdk"; then
+                -o "$test_dir/llvm-c-runtime" ||
+           ! env -u DYLD_LIBRARY_PATH -u DYLD_FALLBACK_LIBRARY_PATH -u LD_LIBRARY_PATH \
+                "$test_dir/llvm-c-runtime"; then
             rm -rf "$test_dir"
-            echo "Error: packaged LLVM C SDK failed to compile, link, or run" >&2
+            echo "Error: packaged LLVM C runtime ABI failed to compile, link, or run" >&2
+            return 1
+        fi
+
+        cat > "$test_dir/cxx-runtime.cpp" << 'EOF'
+#include <numeric>
+#include <vector>
+int main() {
+  std::vector<int> values{17, 25};
+  return std::accumulate(values.begin(), values.end(), 0) == 42 ? 0 : 1;
+}
+EOF
+        # The executable has an explicit rpath. Globally overriding Darwin's
+        # system libc++ also redirects OS components to a different ABI and
+        # can break weak allocation symbols on older macOS releases.
+        if ! "$release_dir/bin/clang++" -std=c++17 "$test_dir/cxx-runtime.cpp" \
+                -L"$release_dir/lib" "-Wl,-rpath,$release_dir/lib" \
+                -o "$test_dir/cxx-runtime" ||
+           ! env -u DYLD_LIBRARY_PATH -u DYLD_FALLBACK_LIBRARY_PATH -u LD_LIBRARY_PATH \
+                "$test_dir/cxx-runtime"; then
+            if [[ "$target" == *-apple-darwin && -f "$test_dir/cxx-runtime" ]]; then
+                otool -L "$test_dir/cxx-runtime" || true
+            fi
+            rm -rf "$test_dir"
+            echo "Error: packaged Clang C++ headers/runtime failed to compile, link, or run" >&2
             return 1
         fi
     fi
@@ -695,15 +731,19 @@ EOF
     # lld performs the LTO plugin work in-process. This proves that the
     # packaged Clang can emit LLVM bitcode and the packaged linker can load and
     # lower it for an Espressif target.
-    if ! "$release_dir/bin/clang$exe_suffix" --target=riscv32-esp-unknown-elf \
-            -mcpu=generic-rv32 -Werror -ffreestanding -flto -c \
-            "$test_dir/codegen.c" -o "$test_dir/esp32c3-lto.o" ||
-       ! "$release_dir/bin/ld.lld$exe_suffix" -r \
-            "$test_dir/esp32c3-lto.o" -o "$test_dir/esp32c3-lto-linked.o"; then
-        rm -rf "$test_dir"
-        echo "Error: ESP32-C3 LTO compile or plugin-backed link failed" >&2
-        return 1
-    fi
+    local lto_mode
+    for lto_mode in thin full; do
+        if ! "$release_dir/bin/clang$exe_suffix" --target=riscv32-esp-unknown-elf \
+                -mcpu=generic-rv32 -Werror -ffreestanding "-flto=$lto_mode" -c \
+                "$test_dir/codegen.c" -o "$test_dir/esp32c3-lto.o" ||
+           ! "$release_dir/bin/ld.lld$exe_suffix" -r \
+                "$test_dir/esp32c3-lto.o" -o "$test_dir/esp32c3-lto-linked.o" ||
+           [[ ! -s "$test_dir/esp32c3-lto-linked.o" ]]; then
+            rm -rf "$test_dir"
+            echo "Error: ESP32-C3 $lto_mode LTO compile or link failed" >&2
+            return 1
+        fi
+    done
     for object in \
         "$test_dir/esp32.o" "$test_dir/esp8266.o" "$test_dir/esp32c3.o" \
         "$test_dir/x86.o" "$test_dir/arm.o" "$test_dir/aarch64.o" \
@@ -761,6 +801,9 @@ build_windows_platform() {
         return 1
     fi
     scripts_dir="$(download_build_scripts)"
+    # Catch MinGW C/C++ export and template ABI regressions before the full build.
+    python3 "$SCRIPT_DIR/scripts/test_mingw_dll_abi.py" "$LLVM_PROJECTDIR" "$target" \
+        "$SCRIPT_DIR/dist/dll-abi-smoke"
     while IFS= read -r arg; do
         ccache_args+=("$arg")
     done < <(get_ccache_cmake_args)
@@ -779,6 +822,7 @@ build_windows_platform() {
         -DLLVM_TOOLCHAIN_INCLUDE_GNU_BINUTILS=OFF \
         -DLLVM_TOOLCHAIN_ESPRESSIF=ON \
         -DLLVM_TOOLCHAIN_CROSS_BUILD_MINGW=ON \
+        -DLLVM_TOOLCHAIN_MINGW_SHARED_LLVM=ON \
         -DLLVM_TOOLCHAIN_HOST_TRIPLE="$target" \
         '-DLLVM_TOOLCHAIN_ENABLED_TARGETS=RISCV;Xtensa' \
         '-DLLVM_TARGETS_TO_BUILD=X86;ARM;AArch64;AVR;Mips;RISCV;WebAssembly' \
@@ -808,6 +852,8 @@ build_windows_platform() {
     rmdir "$release_dir/lib/clang-runtimes" 2>/dev/null || true
     write_payload_manifest "$release_dir" "$target"
     install_payload_licenses "$release_dir"
+
+    python3 "$SCRIPT_DIR/scripts/deduplicate_windows_tools.py" "$release_dir"
 
     # Cross-built PE executables cannot run on the Linux builder. Check the
     # complete archive on a native Windows runner before it can be released.
@@ -839,18 +885,13 @@ build_windows_platform() {
         return 1
     }
 
-    python3 "$SCRIPT_DIR/scripts/validate_windows.py" "$release_dir" "$target"
+    python3 "$SCRIPT_DIR/scripts/validate_windows.py" "$release_dir" "$target" --require-shared-llvm
 
-    cmake --build "$build_dir" --target repack-llvm-toolchain
-    local generated_archive
-    generated_archive="$(find "$build_dir" -maxdepth 1 -name "clang-esp-*-$target.tar.xz" -print -quit)"
-    if [[ -z "$generated_archive" ]]; then
-        echo "Error: Windows package archive was not generated" >&2
-        return 1
-    fi
     mkdir -p "$SCRIPT_DIR/dist"
     local archive="$SCRIPT_DIR/dist/clang-esp-$VERSION_STRING-$target.tar.xz"
-    cp "$generated_archive" "$archive"
+    # Use system tar explicitly to preserve hard links in the final archive,
+    # keeping every tool name while storing identical contents only once.
+    COPYFILE_DISABLE=1 tar -cf - -C "$(dirname "$release_dir")" esp-clang/ | xz -T0 > "$archive"
     write_archive_checksum "$archive"
     echo "Windows cross-build completed: $archive"
 }

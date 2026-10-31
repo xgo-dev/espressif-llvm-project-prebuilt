@@ -50,6 +50,42 @@ class WindowsPayloadTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "manifest host_target"):
             validate(self.root, "x86_64-w64-mingw32")
 
+    def shared_fixture(self):
+        manifest = self.root / "LLGO-LLVM-MANIFEST.txt"
+        manifest.write_text(f"host_target={self.target}\nwindows_llvm_link_mode=shared\n")
+        self.shared_tools = {"clang.exe", "ld.lld.exe", "llc.exe", "opt.exe",
+                             "llvm-ar.exe", "llvm-objcopy.exe", "llvm-readobj.exe"}
+        for name in self.shared_tools | {"libLLVM.dll"}:
+            shutil.copy2(BOOTSTRAP / self.target / "bin/libunwind.dll", self.root / "bin" / name)
+
+    def test_shared_imports_are_required(self):
+        self.shared_fixture()
+        def inspect(path):
+            return MACHINES[self.target], {"libllvm.dll"} if path.name in self.shared_tools else set()
+        with mock.patch("validate_windows.inspect_pe", side_effect=inspect), \
+                contextlib.redirect_stdout(io.StringIO()):
+            validate(self.root, self.target, require_shared_llvm=True)
+        for static_tool in self.shared_tools:
+            def inspect_static(path):
+                machine, imports = inspect(path)
+                return machine, set() if path.name == static_tool else imports
+            with self.subTest(static_tool=static_tool), \
+                    mock.patch("validate_windows.inspect_pe", side_effect=inspect_static):
+                with self.assertRaisesRegex(ValueError, "does not import.*shared LLVM DLL"):
+                    validate(self.root, self.target, require_shared_llvm=True)
+
+    def test_shared_dll_is_required(self):
+        self.shared_fixture()
+        (self.root / "bin/libLLVM.dll").unlink()
+        with self.assertRaisesRegex(ValueError, "shared LLVM DLL is missing"):
+            validate(self.root, self.target, require_shared_llvm=True)
+
+    def test_static_sdk_remains_independent(self):
+        with contextlib.redirect_stdout(io.StringIO()):
+            validate(self.root, self.target)
+        with self.assertRaisesRegex(ValueError, "link_mode is not shared"):
+            validate(self.root, self.target, require_shared_llvm=True)
+
     def test_non_windows_runner(self):
         with self.assertRaisesRegex(ValueError, "native validation requires Windows"):
             validate(self.root, self.target, native=True)

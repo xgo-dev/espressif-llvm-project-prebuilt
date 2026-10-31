@@ -66,7 +66,7 @@ def inspect_pe(path):
     return machine, imports
 
 
-def validate(root, target, native=False, llvm_version=None):
+def validate(root, target, native=False, llvm_version=None, require_shared_llvm=False):
     expected = MACHINES[target]
     if native:
         # PROCESSOR_ARCHITEW6432 identifies the OS when invoked through x64 bash
@@ -84,14 +84,28 @@ def validate(root, target, native=False, llvm_version=None):
     files = {p.name.lower(): p for p in (root / "bin").iterdir() if p.suffix.lower() in (".exe", ".dll")}
     if not files:
         raise ValueError("no Windows binaries found")
+    dependencies = {}
     for path in files.values():
         machine, imports = inspect_pe(path)
+        dependencies[path.name.lower()] = imports
         if machine != expected:
             raise ValueError(f"{path}: PE machine {machine:#x}, expected {expected:#x}")
         for dll in imports:
             if dll in files or dll in SYSTEM_DLLS or dll.startswith(("api-ms-", "ext-ms-")):
                 continue
             raise ValueError(f"{path}: unbundled non-system dependency {dll}")
+    if require_shared_llvm:
+        if manifest.get("windows_llvm_link_mode") != "shared":
+            raise ValueError("manifest windows_llvm_link_mode is not shared")
+        llvm_dlls = {name for name in files
+                     if name.endswith(".dll") and name.startswith(("libllvm", "llvm"))}
+        if not llvm_dlls:
+            raise ValueError("shared LLVM DLL is missing from Windows payload")
+        for name in ("clang.exe", "ld.lld.exe", "llc.exe", "opt.exe", "llvm-ar.exe",
+                     "llvm-objcopy.exe", "llvm-readobj.exe"):
+            if not (dependencies.get(name, set()) & llvm_dlls):
+                raise ValueError(f"{name} does not import the packaged shared LLVM DLL")
+        print("Validated shared LLVM imports for Clang, LLD and LLVM tools")
     print(f"Validated {len(files)} PE files and DLL imports for {target}")
 
 
@@ -101,5 +115,6 @@ if __name__ == "__main__":
     parser.add_argument("target", choices=MACHINES)
     parser.add_argument("--native", action="store_true")
     parser.add_argument("--llvm-version", help="Expected development SDK manifest llvm_version")
+    parser.add_argument("--require-shared-llvm", action="store_true")
     args = parser.parse_args()
-    validate(args.root, args.target, args.native, args.llvm_version)
+    validate(args.root, args.target, args.native, args.llvm_version, args.require_shared_llvm)
