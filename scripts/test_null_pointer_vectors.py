@@ -16,7 +16,7 @@ IR = """@scalar = global ptr null
 def validate(bindir):
     def tool(name):
         path = bindir / name
-        return str(path if path.is_file() else path.with_suffix(".exe"))
+        return str(path if path.is_file() else bindir / (name + ".exe"))
 
     def run(name, *args):
         subprocess.run([tool(name), *map(str, args)], check=True)
