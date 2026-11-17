@@ -1,5 +1,8 @@
 # Espressif LLVM executable toolchains
 
+LLVM 23 development and releases are maintained on the `llvm23` branch.
+Target LLVM 23 pull requests at that branch; `main` retains the LLVM 22 line.
+
 The `clang-esp-<payload>-<host>.tar.xz` archives are runtime toolchains for
 Clang, LLVM and LLD, including LLGo's embedded targets. All eight compiler
 backends and the ESP32/ESP8266 assembler aliases are retained.

@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - llvm23
     tags:
       - '*'
     paths:
@@ -79,7 +80,7 @@ jobs:
           tag="$ESP_LLVM_PAYLOAD_VERSION"
           upload="false"
         elif [ "${{ github.event_name }}" = "push" ]; then
-          # A main-branch build warms the trusted cache consumed by a later tag.
+          # Maintenance-branch pushes build and validate without publishing.
           tag="$ESP_LLVM_PAYLOAD_VERSION"
           upload="false"
         elif [ -n "${{ inputs.tag }}" ]; then
@@ -166,8 +167,8 @@ jobs:
     - name: Checkout
       uses: actions/checkout@v4
 
-    # A PR cache is isolated to that PR. Once merged, the main-branch build
-    # publishes the trusted cache that a tag build may restore. Tag builds use
+    # A PR cache is isolated to that PR. Branch builds save reusable caches
+    # subject to GitHub's cache scope rules. Tag builds use
     # restore-only so they do not spend repository cache quota on tag-scoped
     # entries that future releases cannot reuse.
     - name: Restore ccache
