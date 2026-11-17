@@ -1,23 +1,6 @@
 name: Windows x86 SDK
 on:
-  push:
-    paths:
-      - 'scripts/build_windows_sdk.sh'
-      - 'scripts/validate_windows.py'
-      - 'scripts/test_windows_validation.py'
-      - 'scripts/test_windows_sdk.py'
-      - 'scripts/windows_sdk_smoke.cpp'
-      - 'toolchain.env'
-      - '.github/workflows/windows-x86-sdk.yml'
-  pull_request:
-    paths:
-      - 'scripts/build_windows_sdk.sh'
-      - 'scripts/validate_windows.py'
-      - 'scripts/test_windows_validation.py'
-      - 'scripts/test_windows_sdk.py'
-      - 'scripts/windows_sdk_smoke.cpp'
-      - 'toolchain.env'
-      - '.github/workflows/windows-x86-sdk.yml'
+  workflow_call:
   workflow_dispatch:
 permissions:
   contents: read
