@@ -17,10 +17,12 @@ source contract fixed. Existing release assets and their checksums must remain
 unchanged. Consumers should update the payload version and SHA-256 together
 after the new assets have passed validation and been published.
 
-The current payload is Espressif LLVM 22.1.4, built with the pinned LLVM 22
-llvm-mingw bootstrap. The separate Windows x86 host SDK stays on upstream LLVM
-22.1.8. LLVM 23 adoption is deferred while its upstream issue blocks LLGo;
-packaging changes must keep the LLVM 22 source and SDK contracts intact.
+The current payload is our Espressif port of LLVM 23.1.6, built with the pinned
+LLVM 22 llvm-mingw bootstrap. The separate Windows x86 host SDK uses official
+LLVM 23.1.6. Both source revisions are pinned in `toolchain.env`. This release
+includes the upstream null-pointer vector emission fix (#235980); extracted
+payload validation exercises object emission and LTO linking for that case.
+The bootstrap version is independent of the LLVM version being built.
 
 Windows Clang, LLD and LLVM utilities share the packaged LLVM DLL. LLVM's
 existing MinGW interface annotations and hidden default visibility restrict

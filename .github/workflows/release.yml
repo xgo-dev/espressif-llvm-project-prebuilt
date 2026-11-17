@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - llvm23
     tags:
       - '*'
     paths:
@@ -12,6 +13,7 @@ on:
       - 'patches/**'
       - 'scripts/**'
       - '.github/workflows/release.yml'
+      - '.github/workflows/windows-x86-sdk.yml'
       - '**.md'
   pull_request:
     types:
@@ -24,11 +26,12 @@ on:
       - 'patches/**'
       - 'scripts/**'
       - '.github/workflows/release.yml'
+      - '.github/workflows/windows-x86-sdk.yml'
       - '**.md'
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Tag to build (optional, uses current commit if empty)'
+        description: 'Release tag (must match toolchain.env; source is selected by workflow ref)'
         required: false
         type: string
       upload:
@@ -66,29 +69,41 @@ jobs:
     - name: Test Unix runtime packaging
       run: python3 scripts/test_unix_packaging.py
 
+    - name: Test complete release assembly
+      run: python3 scripts/test_prepare_release.py
+
     - name: Determine tag and version
       id: vars
+      env:
+        INPUT_TAG: ${{ inputs.tag }}
+        INPUT_UPLOAD: ${{ inputs.upload }}
       run: |
+        set -euo pipefail
         source toolchain.env
-        if [ "${{ github.event_name }}" = "push" ] && [ "${{ github.ref_type }}" = "tag" ]; then
+        if [ "$GITHUB_EVENT_NAME" = "push" ] && [ "$GITHUB_REF_TYPE" = "tag" ]; then
           # Tag push - create release
-          tag="${{ github.ref_name }}"
+          tag="$GITHUB_REF_NAME"
           upload="true"
-        elif [ "${{ github.event_name }}" = "pull_request" ]; then
+        elif [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
           # PR build - no release, use the checked-in payload contract.
           tag="$ESP_LLVM_PAYLOAD_VERSION"
           upload="false"
-        elif [ "${{ github.event_name }}" = "push" ]; then
-          # A main-branch build warms the trusted cache consumed by a later tag.
+        elif [ "$GITHUB_EVENT_NAME" = "push" ]; then
+          # Maintenance-branch pushes build and validate without publishing.
           tag="$ESP_LLVM_PAYLOAD_VERSION"
           upload="false"
-        elif [ -n "${{ inputs.tag }}" ]; then
+        elif [ -n "${INPUT_TAG}" ]; then
           # Manual trigger with tag
-          tag="${{ inputs.tag }}"
-          upload="${{ inputs.upload }}"
+          tag="${INPUT_TAG}"
+          upload="${INPUT_UPLOAD}"
         else
           tag="$ESP_LLVM_PAYLOAD_VERSION"
-          upload="${{ inputs.upload }}"
+          upload="${INPUT_UPLOAD}"
+        fi
+
+        if [ "$tag" != "$ESP_LLVM_PAYLOAD_VERSION" ]; then
+          echo "Release tag $tag does not match payload $ESP_LLVM_PAYLOAD_VERSION" >&2
+          exit 1
         fi
 
         version_string="esp-$tag"
@@ -100,7 +115,7 @@ jobs:
         echo "version_string=$version_string" >> $GITHUB_OUTPUT
 
         echo "Build configuration:"
-        echo "  Event: ${{ github.event_name }}"
+        echo "  Event: $GITHUB_EVENT_NAME"
         echo "  Tag: $tag"
         echo "  LLVM source ref: $ESP_LLVM_SOURCE_REF"
         echo "  Expected LLVM version: $ESP_LLVM_EXPECTED_VERSION"
@@ -166,8 +181,8 @@ jobs:
     - name: Checkout
       uses: actions/checkout@v4
 
-    # A PR cache is isolated to that PR. Once merged, the main-branch build
-    # publishes the trusted cache that a tag build may restore. Tag builds use
+    # A PR cache is isolated to that PR. Branch builds save reusable caches
+    # subject to GitHub's cache scope rules. Tag builds use
     # restore-only so they do not spend repository cache quota on tag-scoped
     # entries that future releases cannot reuse.
     - name: Restore ccache
@@ -393,29 +408,39 @@ jobs:
           ${{ runner.temp }}/esp-llgo-consumer/firmware source/*.log
         retention-days: 7
 
+  windows-sdk:
+    name: Windows x86 SDK
+    needs: prepare
+    uses: ./.github/workflows/windows-x86-sdk.yml
+
   release:
     name: Create Release
-    needs: [prepare, build, validate-windows, validate-unix]
+    needs: [prepare, build, validate-windows, validate-unix, windows-sdk]
     if: needs.prepare.outputs.upload == 'true' && github.event_name != 'pull_request'
     runs-on: ubuntu-latest
 
     steps:
+    - uses: actions/checkout@v4
+
     - name: Download all artifacts
       uses: actions/download-artifact@v4
       with:
         path: artifacts
 
-    - name: Prepare release files
+    - name: Verify complete release and prepare checksums
       run: |
-        find artifacts -name "*.tar.xz" -exec mv {} . \;
-        sha256sum *.tar.xz > "clang-esp-${{ needs.prepare.outputs.tag }}-checksum.sha256"
-        echo "Release files:"
-        ls -la *.tar.xz *.sha256
+        source toolchain.env
+        python3 scripts/prepare_release.py artifacts release-assets \
+          "$ESP_LLVM_PAYLOAD_VERSION" "$LLVM_WINDOWS_SDK_VERSION"
 
     - name: Create Release
       uses: softprops/action-gh-release@v2
       with:
         tag_name: ${{ needs.prepare.outputs.tag }}
+        target_commitish: ${{ github.sha }}
+        make_latest: false
+        fail_on_unmatched_files: true
+        overwrite_files: false
         name: "Espressif LLVM ${{ needs.prepare.outputs.tag }}"
         body: |
           Executable Clang/LLVM/LLD runtime toolchains, with all eight LLGo
@@ -424,9 +449,12 @@ jobs:
           Unix archives omit LLVM/Clang development SDK headers, static SDK
           libraries and build-system metadata. Builds of LLVM bindings or
           LLGo itself should continue to use a separately pinned development SDK.
+
+          Includes the independently built LLVM 23.1.6 Windows x86 development
+          SDK, validated on Windows with executable and C/C++ API checks.
         draft: false
         prerelease: false
         files: |
-          *.tar.xz
-          *.sha256
+          release-assets/*.tar.xz
+          release-assets/*.sha256
         token: ${{ secrets.GITHUB_TOKEN }}

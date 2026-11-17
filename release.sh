@@ -575,6 +575,8 @@ validate_release() {
         return 1
     fi
 
+    python3 "$SCRIPT_DIR/scripts/test_null_pointer_vectors.py" "$release_dir/bin"
+
     test_dir="$(mktemp -d)"
     cat > "$test_dir/verify.ll" << 'EOF'
 define i32 @llgo_esp_verify_smoke(i32 %a, i32 %b) {
