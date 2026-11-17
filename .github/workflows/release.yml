@@ -69,6 +69,9 @@ jobs:
     - name: Test Unix runtime packaging
       run: python3 scripts/test_unix_packaging.py
 
+    - name: Test source tag preservation
+      run: python3 scripts/test_source_checkout.py
+
     - name: Test complete release assembly
       run: python3 scripts/test_prepare_release.py
 
