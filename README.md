@@ -21,7 +21,10 @@ SDK is likewise independent of the ESP executable payload.
 `./release.sh <host>` builds, packages and tests a toolchain. Unix builds
 also hide the development installation and retest the extracted archive.
 CI runs actual LLGo ESP32/ESP32-C3 firmware builds with default and Full LTO
-against all four Unix runtime packages, without extracting a development SDK.
+against all four Unix runtime packages. The consumer is built from the pinned
+LLVM 23 migration source using CI-only headers from the same LLVM build, and
+links the extracted runtime libraries. Those headers are kept outside the
+runtime payload and excluded from the published release.
 
 A release contains seven ESP runtime archives (Linux and macOS x86_64/ARM64,
 and Windows x86/x86_64/ARM64), plus the Windows x86 development SDK. The release
