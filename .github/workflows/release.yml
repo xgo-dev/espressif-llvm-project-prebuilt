@@ -69,6 +69,9 @@ jobs:
     - name: Test Unix runtime packaging
       run: python3 scripts/test_unix_packaging.py
 
+    - name: Test Unix consumer validation
+      run: python3 scripts/test_unix_consumer.py
+
     - name: Test source tag preservation
       run: python3 scripts/test_source_checkout.py
 
@@ -272,6 +275,22 @@ jobs:
         LLVM_EXPECTED_VERSION: ${{ needs.prepare.outputs.llvm_expected_version }}
       run: ./release.sh ${{ matrix.target }}
 
+    - name: Package development headers for the LLVM 23 consumer test
+      if: ${{ !endsWith(matrix.target, '-w64-mingw32') }}
+      shell: bash
+      run: |
+        tar -cJf "$RUNNER_TEMP/llvm-consumer-headers.tar.xz" \
+          -C "install/${{ matrix.target }}" include/llvm include/llvm-c
+
+    - name: Upload consumer development headers
+      if: ${{ !endsWith(matrix.target, '-w64-mingw32') }}
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ matrix.target }}-consumer-headers
+        path: ${{ runner.temp }}/llvm-consumer-headers.tar.xz
+        if-no-files-found: error
+        retention-days: 7
+
     - name: Show ccache statistics
       if: always()
       shell: bash
@@ -386,6 +405,13 @@ jobs:
       with:
         name: ${{ matrix.target }}-esp-clang-packages
         path: artifacts
+    - uses: actions/download-artifact@v4
+      with:
+        name: ${{ matrix.target }}-consumer-headers
+        path: consumer-headers
+    - name: Extract consumer development headers
+      shell: bash
+      run: tar -xf consumer-headers/llvm-consumer-headers.tar.xz -C consumer-headers
     - name: Verify and execute extracted Unix payload
       shell: bash
       env:
@@ -400,7 +426,8 @@ jobs:
         tar -xf "$archive" -C extracted
         ./release.sh --validate "$PWD/extracted/esp-clang" ${{ matrix.target }}
         python3 scripts/test_unix_llgo.py "$PWD/extracted/esp-clang" \
-          ${{ matrix.target }} "$RUNNER_TEMP/esp-llgo-consumer"
+          ${{ matrix.target }} "$RUNNER_TEMP/esp-llgo-consumer" \
+          --llvm-headers "$PWD/consumer-headers"
     - name: Upload firmware validation evidence
       if: always()
       uses: actions/upload-artifact@v4
@@ -408,6 +435,7 @@ jobs:
         name: ${{ matrix.target }}-llgo-validation
         path: |
           ${{ runner.temp }}/esp-llgo-consumer/consumer-results.json
+          ${{ runner.temp }}/esp-llgo-consumer/build-consumer.log
           ${{ runner.temp }}/esp-llgo-consumer/firmware source/*.log
         retention-days: 7
 
@@ -425,10 +453,17 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    - name: Download all artifacts
+    - name: Download runtime packages
       uses: actions/download-artifact@v4
       with:
+        pattern: "*-esp-clang-packages"
         path: artifacts
+
+    - name: Download Windows x86 SDK
+      uses: actions/download-artifact@v4
+      with:
+        name: llvm-windows-x86-sdk
+        path: artifacts/llvm-windows-x86-sdk
 
     - name: Verify complete release and prepare checksums
       run: |
