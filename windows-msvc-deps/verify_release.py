@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Require two complete, qualified packages before publishing a new release."""
 import json
+import hashlib
 import os
 from pathlib import Path
 import sys
@@ -32,11 +33,24 @@ def verify(directory, tag, revision):
             raise ValueError(f'Incorrect qualification report for {arch}')
         with zipfile.ZipFile(archive) as package:
             manifest = json.loads(package.read('build-manifest.json'))
-            if (manifest['architecture'] != arch or manifest['runtime'] != 'MT' or
+            if (manifest['schema'] != 1 or manifest['architecture'] != arch or
+                    manifest['runtime'] != 'MT' or manifest['build_type'] != 'Release' or
+                    manifest['llvm_version'] != contract['llvm_version'] or
                     manifest['version'] != contract['version'] or
                     manifest['producer_revision'] != revision or
                     manifest['sources'] != contract['sources']):
                 raise ValueError(f'Incorrect build manifest for {arch}')
+            required = {'lib/zs.lib', 'lib/zstd_static.lib',
+                        'licenses/zlib-LICENSE', 'licenses/zstd-LICENSE'}
+            files = manifest['files']
+            if not required.issubset(files):
+                raise ValueError(f'Incomplete dependency package for {arch}')
+            names = package.namelist()
+            if len(names) != len(set(names)) or set(names) != set(files) | {'build-manifest.json'}:
+                raise ValueError(f'Unexpected package members for {arch}')
+            for name, expected_hash in files.items():
+                if hashlib.sha256(package.read(name)).hexdigest() != expected_hash:
+                    raise ValueError(f'Incorrect package member hash: {name}')
     if {p.name for p in directory.iterdir()} != expected:
         raise ValueError('Unexpected release files')
 

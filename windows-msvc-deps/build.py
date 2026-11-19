@@ -93,7 +93,10 @@ def build(arch, work, output):
         source_parent = work / f'source-{name}'
         source_parent.mkdir()
         with tarfile.open(archive) as tar:
-            tar.extractall(source_parent, filter='data')
+            # Match the official Windows builder: zstd tests contain symlinks
+            # and are not needed for these library-only builds.
+            members = [m for m in tar if name != 'zstd' or '/tests/' not in m.name]
+            tar.extractall(source_parent, members=members, filter='data')
         source_root = source_parent / f"{name}-{source['version']}"
         source_roots[name] = source_root
         options = (['-DZLIB_BUILD_TESTING=OFF', '-DZLIB_BUILD_SHARED=OFF',

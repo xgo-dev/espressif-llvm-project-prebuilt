@@ -1,6 +1,13 @@
 import unittest
+import hashlib
+import json
+from pathlib import Path
+import tempfile
+from unittest.mock import patch
+import zipfile
 
-from build import inspect_imports, inspect_library
+from build import HERE, inspect_imports, inspect_library, sha256
+from verify_release import verify
 
 
 class BinaryChecks(unittest.TestCase):
@@ -29,6 +36,53 @@ class BinaryChecks(unittest.TestCase):
     def test_system_imports(self):
         self.assertEqual(inspect_imports(f'Machine: {self.machine}\nName: KERNEL32.dll\n',
                                         self.machine), ['KERNEL32.dll'])
+
+
+class ReleaseChecks(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.contract = json.loads((HERE / 'contract.json').read_text())
+        self.revision = 'a' * 40
+        self.tag = 'llvm-msvc-deps-' + self.contract['version']
+        for arch, target in self.contract['targets'].items():
+            stem = f"{self.tag}-windows-{arch}-msvc-mt"
+            archive = self.root / f'{stem}.zip'
+            files = {name: name.encode() for name in (
+                'lib/zs.lib', 'lib/zstd_static.lib',
+                'licenses/zlib-LICENSE', 'licenses/zstd-LICENSE')}
+            manifest = {**self.contract, 'architecture': arch,
+                        'producer_revision': self.revision,
+                        'files': {n: hashlib.sha256(b).hexdigest() for n, b in files.items()}}
+            with zipfile.ZipFile(archive, 'w') as package:
+                for name, data in files.items():
+                    package.writestr(name, data)
+                package.writestr('build-manifest.json', json.dumps(manifest))
+            digest = sha256(archive)
+            (self.root / f'{stem}.zip.sha256').write_text(f'{digest}  {archive.name}\n')
+            (self.root / f'{stem}.validation.json').write_text(json.dumps({
+                'architecture': arch, 'sdk_sha256': target['sdk_sha256'],
+                'archive_sha256': digest, 'producer_revision': self.revision,
+                'executables': {'FileCheck': [], 'compression-smoke': []}}))
+
+    def test_complete_release(self):
+        verify(self.root, self.tag, self.revision)
+
+    def test_missing_architecture(self):
+        next(self.root.glob('*aarch64*.zip')).unlink()
+        with self.assertRaises(FileNotFoundError):
+            verify(self.root, self.tag, self.revision)
+
+    def test_different_revision(self):
+        with self.assertRaises(ValueError):
+            verify(self.root, self.tag, 'b' * 40)
+
+    def test_corrupt_archive(self):
+        with next(self.root.glob('*.zip')).open('ab') as file:
+            file.write(b'corrupt')
+        with self.assertRaises(ValueError):
+            verify(self.root, self.tag, self.revision)
 
 
 if __name__ == '__main__':
