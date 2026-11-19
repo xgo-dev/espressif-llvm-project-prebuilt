@@ -87,9 +87,24 @@ def build(arch, work, output):
     sdk_archive = download(target['sdk_url'], target['sdk_sha256'], downloads / 'sdk.tar.xz')
     sdk_parent = work / 'sdk'
     sdk_parent.mkdir()
-    # Official LLVM Windows archives contain tar hard links; native tar preserves them.
-    run('tar.exe', '-xf', sdk_archive, '-C', sdk_parent)
-    sdk = next(sdk_parent.glob('clang+llvm-*'))
+    # Windows' bundled bsdtar can stall on the upstream xz archive. Use the
+    # same two-stage 7-Zip extraction as LLGo's Windows SDK installer, selecting
+    # only the compiler, resource headers and libraries used by these probes.
+    seven_zip = Path(os.environ['ProgramFiles']) / '7-Zip/7z.exe'
+    tar_directory = work / 'sdk-tar'
+    tar_directory.mkdir()
+    sdk_name = f"clang+llvm-{contract['llvm_version']}-{arch}-pc-windows-msvc"
+    tools_needed = ('clang.exe', 'clang-cl.exe', 'clang++.exe', 'lld-link.exe',
+                    'llvm-config.exe', 'llvm-readobj.exe', 'llvm-ar.exe', 'llvm-lib.exe')
+    entries = [f'{sdk_name}/bin/{name}' for name in tools_needed]
+    entries += [f'{sdk_name}/bin/*.dll', f'{sdk_name}/include/*',
+                f'{sdk_name}/lib/clang/*/include/*']
+    entries += [f'{sdk_name}/lib/{name}' for name in
+                ('LLVMFileCheck.lib', 'LLVMSupport.lib', 'LLVMDemangle.lib')]
+    run(seven_zip, 'x', '-y', f'-o{tar_directory}', sdk_archive)
+    run(seven_zip, 'x', '-y', f'-o{sdk_parent}', tar_directory / 'sdk.tar', *entries)
+    shutil.rmtree(tar_directory)
+    sdk = sdk_parent / sdk_name
     tools = sdk / 'bin'
     llvm_config = tools / 'llvm-config.exe'
     if capture(llvm_config, '--version') != contract['llvm_version']:
