@@ -5,7 +5,7 @@ from pathlib import Path
 import tempfile
 import zipfile
 
-from build import HERE, inspect_imports, inspect_library, sha256
+from build import HERE, inspect_imports, inspect_library, relocate_pkgconfig, sha256
 from verify_release import verify
 
 
@@ -35,6 +35,26 @@ class BinaryChecks(unittest.TestCase):
     def test_system_imports(self):
         self.assertEqual(inspect_imports(f'Machine: {self.machine}\nName: KERNEL32.dll\n',
                                         self.machine), ['KERNEL32.dll'])
+
+
+class PkgConfigChecks(unittest.TestCase):
+    def test_zlib_cmake_expanded_paths(self):
+        source = ('prefix=C:/a/_temp/stage\nexec_prefix=C:/a/_temp/stage\n'
+                  'libdir=C:/a/_temp/stage/lib\nsharedlibdir=C:/a/_temp/stage/lib\n'
+                  'includedir=C:/a/_temp/stage/include\nVersion: 1.3.2\n'
+                  'Libs: -L${libdir} -L${sharedlibdir} -lz\nCflags: -I${includedir}\n')
+        result = relocate_pkgconfig(source, 'zs')
+        self.assertNotIn('C:/a/', result)
+        self.assertIn('prefix=${pcfiledir}/../..\n', result)
+        self.assertIn('libdir=${prefix}/lib\n', result)
+        self.assertIn('includedir=${prefix}/include\n', result)
+        self.assertIn('Libs: -L"${libdir}" -lzs\n', result)
+        self.assertIn('Version: 1.3.2\n', result)
+
+    def test_zstd_static_library_name(self):
+        result = relocate_pkgconfig('prefix=C:/stage\nLibs: -L${libdir} -lzstd\n',
+                                    'zstd_static')
+        self.assertIn('Libs: -L"${libdir}" -lzstd_static\n', result)
 
 
 class ReleaseChecks(unittest.TestCase):

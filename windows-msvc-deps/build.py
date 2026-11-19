@@ -66,6 +66,18 @@ def inspect_imports(output, machine):
     return imports
 
 
+def relocate_pkgconfig(text, library):
+    # zlib's CMake install expands every directory separately, so changing
+    # prefix alone does not relocate libdir/includedir/sharedlibdir.
+    values = {'prefix': '${pcfiledir}/../..', 'exec_prefix': '${prefix}',
+              'libdir': '${prefix}/lib', 'sharedlibdir': '${prefix}/lib',
+              'includedir': '${prefix}/include'}
+    for name, value in values.items():
+        text = re.sub(rf'^{name}=.*$', f'{name}={value}', text, flags=re.M)
+    # Upstream Unix names (-lz/-lzstd) differ from the MSVC static archives.
+    return re.sub(r'^Libs:.*$', f'Libs: -L"${{libdir}}" -l{library}', text, flags=re.M)
+
+
 def build(arch, work, output):
     contract = json.loads((HERE / 'contract.json').read_text())
     target = contract['targets'][arch]
@@ -120,7 +132,8 @@ def build(arch, work, output):
     if {p.name for p in stage.rglob('*.lib')} != expected or list(stage.rglob('*.dll')):
         raise ValueError('Unexpected libraries in dependency package')
     for pc in stage.rglob('*.pc'):
-        pc.write_text(re.sub(r'^prefix=.*$', 'prefix=${pcfiledir}/../..', pc.read_text(), flags=re.M))
+        library = {'zlib.pc': 'zs', 'libzstd.pc': 'zstd_static'}[pc.name]
+        pc.write_text(relocate_pkgconfig(pc.read_text(), library))
     for metadata in list(stage.rglob('*.cmake')) + list(stage.rglob('*.pc')):
         if stage.as_posix().lower() in metadata.read_text().replace('\\', '/').lower():
             raise ValueError(f'Non-relocatable metadata: {metadata}')
