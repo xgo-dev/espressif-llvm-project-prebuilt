@@ -61,7 +61,7 @@ def inspect_imports(output, machine):
         raise ValueError(f'Unexpected executable machine: {machines}')
     imports = re.findall(r'^\s*Name: (.+\.dll)\s*$', output, re.MULTILINE | re.I)
     for name in imports:
-        if re.search(r'zlib|zstd|msvcp|msvcr|vcruntime|ucrt|libgcc|libstdc\+\+|libwinpthread', name, re.I):
+        if re.search(r'zlib|zstd|msvcp|msvcr|vcruntime|ucrt|api-ms-win-crt-|libgcc|libstdc\+\+|libwinpthread', name, re.I):
             raise ValueError(f'Unexpected runtime dependency: {name}')
     return imports
 
@@ -83,6 +83,13 @@ def build(arch, work, output):
     target = contract['targets'][arch]
     work.mkdir(parents=True, exist_ok=True)
     output.mkdir(parents=True, exist_ok=True)
+    # Preserve only checked downloads across local reruns. Derived files must
+    # not survive changes to the compiler, sources or packaging contract.
+    for name in ('sdk', 'sdk-tar', 'stage', 'source-zlib', 'source-zstd',
+                 'build-zlib', 'build-zstd', 'relocated dependencies'):
+        derived = work / name
+        if derived.exists():
+            shutil.rmtree(derived)
     downloads = work / 'downloads'
     sdk_archive = download(target['sdk_url'], target['sdk_sha256'], downloads / 'sdk.tar.xz')
     sdk_parent = work / 'sdk'

@@ -28,7 +28,8 @@ class BinaryChecks(unittest.TestCase):
         inspect_library(f'Machine: {self.machine}\n/DEFAULTLIB:libcmt', self.machine)
 
     def test_reject_runtime_dlls(self):
-        for dll in ('zstd.dll', 'zlib1.dll', 'VCRUNTIME140.dll', 'ucrtbase.dll'):
+        for dll in ('zstd.dll', 'zlib1.dll', 'VCRUNTIME140.dll', 'ucrtbase.dll',
+                    'api-ms-win-crt-runtime-l1-1-0.dll'):
             with self.subTest(dll=dll), self.assertRaises(ValueError):
                 inspect_imports(f'Machine: {self.machine}\nName: {dll}\n', self.machine)
 
