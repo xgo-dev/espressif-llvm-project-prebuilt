@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "version": "23.1.6-r1",
+  "version": "23.1.6-r2",
   "llvm_version": "23.1.6",
   "llvm_revision": "5b10d2d74929eae78912771222c9855af97496f4",
   "runtime": "MT",
