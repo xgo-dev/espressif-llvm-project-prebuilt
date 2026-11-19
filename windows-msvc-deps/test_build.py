@@ -5,7 +5,8 @@ from pathlib import Path
 import tempfile
 import zipfile
 
-from build import HERE, inspect_imports, inspect_library, relocate_pkgconfig, sha256
+from build import (HERE, inspect_imports, inspect_library, relocate_pkgconfig,
+                   sha256, system_library_names)
 from verify_release import verify
 
 
@@ -39,6 +40,14 @@ class BinaryChecks(unittest.TestCase):
 
 
 class PkgConfigChecks(unittest.TestCase):
+    def test_upstream_system_library_paths(self):
+        self.assertEqual(system_library_names(
+            'psapi.lib zs.lib S:/llvm/build_arm64_stage0/zstd/lib/zstd_static.lib'),
+            ['psapi.lib', 'zs.lib', 'zstd_static.lib'])
+        self.assertEqual(system_library_names(
+            '"S:\\LLVM Build\\lib\\zstd_static.lib" zs.lib'),
+            ['zstd_static.lib', 'zs.lib'])
+
     def test_zlib_cmake_expanded_paths(self):
         source = ('prefix=C:/a/_temp/stage\nexec_prefix=C:/a/_temp/stage\n'
                   'libdir=C:/a/_temp/stage/lib\nsharedlibdir=C:/a/_temp/stage/lib\n'

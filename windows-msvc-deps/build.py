@@ -5,8 +5,9 @@ import argparse
 import hashlib
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 import re
+import shlex
 import shutil
 import subprocess
 import tarfile
@@ -76,6 +77,16 @@ def relocate_pkgconfig(text, library):
         text = re.sub(rf'^{name}=.*$', f'{name}={value}', text, flags=re.M)
     # Upstream Unix names (-lz/-lzstd) differ from the MSVC static archives.
     return re.sub(r'^Libs:.*$', f'Libs: -L"${{libdir}}" -l{library}', text, flags=re.M)
+
+
+def system_library_names(output):
+    # Official ARM64 llvm-config embeds a build-machine path for zstd.
+    # Resolve libraries from the qualified SDK/dependency search paths instead.
+    names = [PureWindowsPath(token.strip('"')).name
+             for token in shlex.split(output, posix=False)]
+    if any(not name.lower().endswith('.lib') for name in names):
+        raise ValueError(f'Unexpected LLVM system libraries: {output}')
+    return names
 
 
 def build(arch, work, output):
@@ -192,8 +203,8 @@ def build(arch, work, output):
         inspect_library(report, target['machine'])
     # llvm-config otherwise defaults to "all" and requires every backend's
     # library on disk, even when only requesting external system libraries.
-    system_libs = capture(llvm_config, '--link-static', '--system-libs',
-                          'support', 'filecheck').split()
+    system_libs = system_library_names(capture(
+        llvm_config, '--link-static', '--system-libs', 'support', 'filecheck'))
     if not expected.issubset(set(system_libs)):
         raise ValueError(f'Unexpected LLVM compression dependencies: {system_libs}')
     # The optional Windows manifest component requires libxml2, but these consumers do not.
