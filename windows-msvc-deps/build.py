@@ -190,7 +190,10 @@ def build(arch, work, output):
         report = capture(readobj, '--file-headers', '--coff-directives', relocated / 'lib' / name)
         (work / f'{name}.inspection.txt').write_text(report)
         inspect_library(report, target['machine'])
-    system_libs = capture(llvm_config, '--link-static', '--system-libs').split()
+    # llvm-config otherwise defaults to "all" and requires every backend's
+    # library on disk, even when only requesting external system libraries.
+    system_libs = capture(llvm_config, '--link-static', '--system-libs',
+                          'support', 'filecheck').split()
     if not expected.issubset(set(system_libs)):
         raise ValueError(f'Unexpected LLVM compression dependencies: {system_libs}')
     # The optional Windows manifest component requires libxml2, but these consumers do not.
