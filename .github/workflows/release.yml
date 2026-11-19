@@ -7,6 +7,7 @@ on:
       - llvm23
     tags:
       - '*'
+      - '!llvm-msvc-deps-*'
     paths:
       - 'release.sh'
       - 'toolchain.env'
@@ -15,6 +16,7 @@ on:
       - '.github/workflows/release.yml'
       - '.github/workflows/windows-x86-sdk.yml'
       - '**.md'
+      - '!windows-msvc-deps/**'
   pull_request:
     types:
       - opened
@@ -28,6 +30,7 @@ on:
       - '.github/workflows/release.yml'
       - '.github/workflows/windows-x86-sdk.yml'
       - '**.md'
+      - '!windows-msvc-deps/**'
   workflow_dispatch:
     inputs:
       tag:
