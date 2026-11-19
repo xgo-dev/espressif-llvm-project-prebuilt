@@ -102,11 +102,15 @@ def build(arch, work, output):
         options = (['-DZLIB_BUILD_TESTING=OFF', '-DZLIB_BUILD_SHARED=OFF',
                     '-DZLIB_BUILD_STATIC=ON', '-DZLIB_INSTALL=ON'] if name == 'zlib' else
                    ['-DZSTD_BUILD_PROGRAMS=OFF', '-DZSTD_BUILD_TESTS=OFF',
-                    '-DZSTD_BUILD_SHARED=OFF', '-DZSTD_BUILD_STATIC=ON'])
+                    '-DZSTD_BUILD_SHARED=OFF', '-DZSTD_BUILD_STATIC=ON',
+                    '-DZSTD_USE_STATIC_RUNTIME=ON'])
         cmake_source = source_root if name == 'zlib' else source_root / 'build/cmake'
         build_dir = work / f'build-{name}'
         run('cmake', '-S', cmake_source, '-B', build_dir, '-G', 'Ninja',
             '-DCMAKE_BUILD_TYPE=Release', '-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded',
+            # zstd 1.5.7 selects pre-3.15 CMake policies; otherwise the runtime
+            # variable can be ignored even though configuration succeeds.
+            '-DCMAKE_POLICY_DEFAULT_CMP0091=NEW',
             f'-DCMAKE_C_COMPILER={compiler.as_posix()}',
             f'-DCMAKE_CXX_COMPILER={compiler.as_posix()}',
             f'-DCMAKE_INSTALL_PREFIX={stage.as_posix()}', *options)

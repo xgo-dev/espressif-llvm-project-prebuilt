@@ -3,7 +3,6 @@ import hashlib
 import json
 from pathlib import Path
 import tempfile
-from unittest.mock import patch
 import zipfile
 
 from build import HERE, inspect_imports, inspect_library, sha256
