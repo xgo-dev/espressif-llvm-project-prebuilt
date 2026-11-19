@@ -25,6 +25,12 @@ def verify(directory, tag, revision):
         if checksum.read_text().strip() != f'{digest}  {archive.name}':
             raise ValueError(f'Incorrect checksum for {arch}')
         validation = json.loads(report.read_text())
+        execution = validation['execution']
+        allowed = [{'host_architecture': arch, 'mode': 'native'}]
+        if arch == 'x86_64':
+            allowed.append({'host_architecture': 'aarch64', 'mode': 'windows-x64-emulation'})
+        if execution not in allowed:
+            raise ValueError(f'Incorrect execution environment for {arch}')
         if (validation['architecture'] != arch or
                 validation['sdk_sha256'] != target['sdk_sha256'] or
                 validation['archive_sha256'] != digest or
@@ -38,6 +44,7 @@ def verify(directory, tag, revision):
                     manifest['llvm_version'] != contract['llvm_version'] or
                     manifest['version'] != contract['version'] or
                     manifest['producer_revision'] != revision or
+                    manifest['execution'] != execution or
                     manifest['sources'] != contract['sources']):
                 raise ValueError(f'Incorrect build manifest for {arch}')
             required = {'lib/zs.lib', 'lib/zstd_static.lib',

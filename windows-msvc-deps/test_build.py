@@ -82,6 +82,8 @@ class ReleaseChecks(unittest.TestCase):
                 'lib/zs.lib', 'lib/zstd_static.lib',
                 'licenses/zlib-LICENSE', 'licenses/zstd-LICENSE')}
             manifest = {**self.contract, 'architecture': arch,
+                        'execution': {'host_architecture': 'aarch64',
+                                      'mode': 'native' if arch == 'aarch64' else 'windows-x64-emulation'},
                         'producer_revision': self.revision,
                         'files': {n: hashlib.sha256(b).hexdigest() for n, b in files.items()}}
             with zipfile.ZipFile(archive, 'w') as package:
@@ -93,6 +95,7 @@ class ReleaseChecks(unittest.TestCase):
             (self.root / f'{stem}.validation.json').write_text(json.dumps({
                 'architecture': arch, 'sdk_sha256': target['sdk_sha256'],
                 'archive_sha256': digest, 'producer_revision': self.revision,
+                'execution': manifest['execution'],
                 'executables': {'FileCheck': [], 'compression-smoke': []}}))
 
     def test_complete_release(self):
@@ -106,6 +109,14 @@ class ReleaseChecks(unittest.TestCase):
     def test_different_revision(self):
         with self.assertRaises(ValueError):
             verify(self.root, self.tag, 'b' * 40)
+
+    def test_incorrect_execution_claim(self):
+        report = next(self.root.glob('*x86_64*.validation.json'))
+        data = json.loads(report.read_text())
+        data['execution']['mode'] = 'native'
+        report.write_text(json.dumps(data))
+        with self.assertRaises(ValueError):
+            verify(self.root, self.tag, self.revision)
 
     def test_corrupt_archive(self):
         with next(self.root.glob('*.zip')).open('ab') as file:

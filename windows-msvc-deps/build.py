@@ -92,6 +92,11 @@ def system_library_names(output):
 def build(arch, work, output):
     contract = json.loads((HERE / 'contract.json').read_text())
     target = contract['targets'][arch]
+    host_arch = {'x64': 'x86_64', 'arm64': 'aarch64'}[os.environ['LLGO_MSVC_BUILD_HOST']]
+    if host_arch != arch and (host_arch, arch) != ('aarch64', 'x86_64'):
+        raise ValueError(f'Cannot execute {arch} checks on {host_arch}')
+    execution = {'host_architecture': host_arch,
+                 'mode': 'native' if host_arch == arch else 'windows-x64-emulation'}
     work.mkdir(parents=True, exist_ok=True)
     output.mkdir(parents=True, exist_ok=True)
     # Preserve only checked downloads across local reruns. Derived files must
@@ -177,6 +182,7 @@ def build(arch, work, output):
     manifest = {
         **contract, 'architecture': arch, 'triple': f'{arch}-pc-windows-msvc',
         'producer_revision': capture('git', 'rev-parse', 'HEAD'),
+        'execution': execution,
         'compiler': capture(compiler, '--version'),
         'msvc_tools_version': os.environ.get('VCToolsVersion'),
         'windows_sdk_version': os.environ.get('WindowsSDKVersion'),
@@ -217,7 +223,8 @@ def build(arch, work, output):
     libraries += [f'-l{Path(name).stem}' for name in system_libs]
     filecheck = contract['sources']['filecheck']
     filecheck_source = download(filecheck['url'], filecheck['sha256'], downloads / 'FileCheck.cpp')
-    validation = {'architecture': arch, 'sdk_sha256': target['sdk_sha256'], 'executables': {}}
+    validation = {'architecture': arch, 'sdk_sha256': target['sdk_sha256'],
+                  'execution': execution, 'executables': {}}
     for name, source in [('compression-smoke', HERE / 'smoke.cpp'), ('FileCheck', filecheck_source)]:
         executable = work / f'{name}.exe'
         run(tools / 'clang++.exe', *flags, source, *libraries, '-o', executable)
