@@ -21,9 +21,9 @@ recheck cached downloads before reusing them. Output is in
 
 Publish by pushing a **new** tag `llvm-msvc-deps-<version>` matching the checked-in
 contract. Both native jobs must pass before the release job verifies and uploads
-the two ZIPs, checksums and validation reports. Release creation fails if a release
-already exists for that tag. Uploads complete in a draft before publication; if
-uploading fails, keep the draft and use a new package revision for recovery.
+the two ZIPs, checksums and validation reports. Release creation fails if a published
+release already exists for that tag. The GitHub CLI uploads into a temporary draft
+and publishes only after every upload succeeds, cleaning up its draft on failure.
 Existing assets are never overwritten. This release does not run the ESP or x86
 MinGW SDK builds.
 
