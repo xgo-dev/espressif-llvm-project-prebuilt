@@ -1,0 +1,86 @@
+name: Windows MSVC dependencies
+
+on:
+  pull_request:
+    paths:
+      - 'windows-msvc-deps/**'
+      - '.github/workflows/windows-msvc-deps.yml'
+  push:
+    branches: [llvm23]
+    tags: ['llvm-msvc-deps-*']
+    paths:
+      - 'windows-msvc-deps/**'
+      - '.github/workflows/windows-msvc-deps.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: msvc-deps-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.ref_type != 'tag' }}
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: windows-2025
+          - arch: aarch64
+            runner: windows-11-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Check validation failure cases
+        run: python windows-msvc-deps/test_build.py
+      - name: Build and validate with the official LLVM SDK
+        shell: pwsh
+        run: ./windows-msvc-deps/run.ps1 -Architecture '${{ matrix.arch }}'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: llvm-msvc-deps-${{ matrix.arch }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: llvm-msvc-deps-*
+          merge-multiple: true
+          path: release-assets
+      - name: Verify both qualified packages and the release tag
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: python3 windows-msvc-deps/verify_release.py release-assets
+      - name: Create a new release and publish only after all uploads succeed
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          # With assets, gh release create checks for an existing published
+          # release, uploads into a temporary draft, then publishes only after
+          # all uploads succeed. It never upserts previously published assets.
+          cat > release-notes.txt <<'EOF'
+            Static zlib and zstd libraries for the official LLVM Windows MSVC SDK.
+            Contains independent x64 and ARM64 Release /MT development packages.
+            Both packages passed native LLVM compression and FileCheck link/run checks.
+            These are host SDK dependencies; they are not Espressif target libraries.
+          EOF
+          gh release create "$RELEASE_TAG" --verify-tag --latest=false \
+            --title "LLVM MSVC dependencies $RELEASE_TAG" \
+            --notes-file release-notes.txt release-assets/*
